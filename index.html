@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <!-- 안전 장치: 이 페이지는 다른 사이트에 아무것도 요청할 수 없습니다 (광고, 추적, 외부 링크 차단).
      'self'는 같은 폴더의 그림·아이콘·manifest·오프라인용 sw.js만 허용합니다. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; connect-src 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; manifest-src 'self'; worker-src 'self'; connect-src 'self'; form-action 'none'">
 <title>정령 친구 합체!</title>
 <meta name="theme-color" content="#4d7a2a">
 <link rel="manifest" href="manifest.webmanifest">
@@ -166,7 +166,7 @@ function sprite(k, idx, foe) {
 /* ---------- 저장 (이 기기 안에만) ---------- */
 const SAVE = 'spirit-pals-v2';
 function fresh() {
-  return { coins:20, stage:1, grid:Array(N).fill(null), found:{}, merged:0, muted:false, cleared:false,
+  return { coins:20, stage:1, grid:Array(N).fill(null), found:{}, merged:0, sfxOff:false, musicOff:false, cleared:false,
            quiz:{ digits:'1', ops:'+' } };
 }
 function load() {
@@ -180,6 +180,7 @@ function load() {
       s.grid = s.grid.map(u => u && info(u.el) ? { el:u.el, lv:Math.max(1, Math.min(MAXLV, u.lv | 0)) } : null);
       s.stage = Math.max(1, Math.min(MAXSTAGE, s.stage | 0));
       const f = fresh(); s.quiz = Object.assign(f.quiz, s.quiz || {});
+      if (s.muted) { s.sfxOff = s.musicOff = true; } delete s.muted;
       return Object.assign(f, s);
     }
   } catch (e) {}
@@ -228,20 +229,93 @@ function genEnemies(st) {
 }
 let enemy = genEnemies(S.stage);
 
-/* ---------- 소리 (기기 안에서 직접 만듦) ---------- */
-let AC = null;
-function beep(f, d = 0.12, type = 'sine', v = 0.12, slide = 0, delay = 0) {
-  if (S.muted) return;
+/* ---------- 소리: 배경음악 + 효과음 (audio 폴더) ----------
+   브라우저는 화면을 처음 누른 뒤에만 소리를 낼 수 있어서, 첫 터치 때 준비함 */
+const SFX_NAMES = ['tap', 'key', 'summon', 'move', 'merge', 'evolve', 'coin', 'hit', 'crit', 'shoot', 'poof',
+                   'correct', 'win', 'lose', 'start', 'finale', 'wrong', 'nope'];
+const BGM_CALM = ['01', '02', '03', '04', '05', '06', '09', '10', '12', '14'];  // 합체할 때
+const BGM_BATTLE = ['07', '08', '11', '13'];                                     // 싸울 때 (더 신나는 곡)
+const MUSIC_VOL = 0.55, SFX_VOL = 0.9;
+let AC = null, sfxGain = null, musicGain = null;
+const BUF = {}, lastPlay = {};
+function audioInit() {
+  if (AC) { if (AC.state === 'suspended') AC.resume(); return; }
   try {
-    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
-    const t0 = AC.currentTime + delay, o = AC.createOscillator(), g = AC.createGain();
-    o.type = type; o.frequency.setValueAtTime(f, t0);
-    if (slide) o.frequency.exponentialRampToValueAtTime(f * slide, t0 + d);
-    g.gain.setValueAtTime(v, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + d);
-    o.connect(g); g.connect(AC.destination); o.start(t0); o.stop(t0 + d + 0.02);
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    sfxGain = AC.createGain(); sfxGain.gain.value = S.sfxOff ? 0 : SFX_VOL; sfxGain.connect(AC.destination);
+    musicGain = AC.createGain(); musicGain.gain.value = S.musicOff ? 0 : MUSIC_VOL; musicGain.connect(AC.destination);
+    SFX_NAMES.forEach(n => fetch('audio/sfx/' + n + '.wav').then(r => r.arrayBuffer())
+      .then(b => new Promise((ok, no) => AC.decodeAudioData(b, ok, no))).then(buf => { BUF[n] = buf; }).catch(() => {}));
+    Music.init();
   } catch (e) {}
 }
-const tune = (notes, step = 0.09, type = 'triangle') => notes.forEach((f, i) => beep(f, 0.18, type, 0.1, 0, i * step));
+// 효과음 한 번 (같은 소리가 너무 촘촘하면 건너뜀). o: { rate, vol, delay, gap, duck }
+function sfx(name, o = {}) {
+  if (!AC || S.sfxOff || !BUF[name]) return;
+  const t = AC.currentTime, gap = o.gap == null ? 0.03 : o.gap;
+  if (lastPlay[name] && t - lastPlay[name] < gap) return;
+  lastPlay[name] = t;
+  const s = AC.createBufferSource(), g = AC.createGain();
+  s.buffer = BUF[name];
+  if (o.rate) s.playbackRate.value = o.rate;
+  g.gain.value = o.vol == null ? 1 : o.vol;
+  s.connect(g); g.connect(sfxGain); s.start(t + (o.delay || 0));
+  if (o.duck) Music.duck(o.duck);
+}
+const Music = {
+  sets: {}, cur: 'calm',
+  init() {
+    for (const kind of ['calm', 'battle']) {
+      const el = new Audio(); el.preload = 'auto';
+      const g = AC.createGain(); g.gain.value = 0;
+      AC.createMediaElementSource(el).connect(g); g.connect(musicGain);
+      const m = { el, g, list: (kind === 'calm' ? BGM_CALM : BGM_BATTLE).slice().sort(() => Math.random() - 0.5), i: 0 };
+      el.addEventListener('ended', () => { m.i = (m.i + 1) % m.list.length; this.load(m); if (this.cur === kind && !S.musicOff) el.play().catch(() => {}); });
+      this.sets[kind] = m;
+    }
+    const want = this.cur; this.cur = null; this.play(want);
+  },
+  load(m) { m.el.src = 'audio/bgm' + m.list[m.i] + '.m4a'; },
+  // 곡 묶음 바꾸기 (천천히 겹쳐서)
+  play(kind) {
+    if (!AC || !this.sets.calm) { this.cur = kind; return; }
+    if (this.cur === kind) return;
+    const t = AC.currentTime;
+    for (const k in this.sets) {
+      const m = this.sets[k], gg = m.g.gain;
+      gg.cancelScheduledValues(t); gg.setValueAtTime(gg.value, t);
+      if (k === kind) {
+        if (!m.el.getAttribute('src')) this.load(m);
+        if (!S.musicOff) m.el.play().catch(() => {});
+        gg.linearRampToValueAtTime(1, t + 0.8);
+      } else {
+        gg.linearRampToValueAtTime(0, t + 0.6);
+        setTimeout(() => { if (this.cur !== k) m.el.pause(); }, 700);
+      }
+    }
+    this.cur = kind;
+  },
+  // 짧은 음악(징글)이 나올 때 배경음악을 잠깐 줄임
+  duck(sec) {
+    if (!musicGain || S.musicOff) return;
+    const t = AC.currentTime, g = musicGain.gain;
+    g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(MUSIC_VOL * 0.3, t + 0.08); g.setValueAtTime(MUSIC_VOL * 0.3, t + sec);
+    g.linearRampToValueAtTime(MUSIC_VOL, t + sec + 0.6);
+  },
+  setOn(on) {
+    if (!musicGain) return;
+    const t = AC.currentTime; musicGain.gain.cancelScheduledValues(t); musicGain.gain.setTargetAtTime(on ? MUSIC_VOL : 0, t, 0.08);
+    const m = this.sets[this.cur]; if (!m) return;
+    if (on) { if (!m.el.getAttribute('src')) this.load(m); m.el.play().catch(() => {}); } else m.el.pause();
+  },
+};
+// 앱이 뒤로 가면 소리 멈춤, 돌아오면 다시
+document.addEventListener('visibilitychange', () => {
+  if (!AC) return;
+  if (document.hidden) { for (const k in Music.sets) Music.sets[k].el.pause(); AC.suspend(); }
+  else { AC.resume(); const m = Music.sets[Music.cur]; if (m && !S.musicOff) m.el.play().catch(() => {}); }
+});
 
 /* ---------- 화면 크기 ---------- */
 let scale = 1, ox = 0, oy = 0, dpr = 1, vw = 0, vh = 0;
@@ -364,15 +438,15 @@ function discover(u) {
 function buy() {
   const c = cost();
   const empty = []; S.grid.forEach((u, i) => { if (!u) empty.push(i); });
-  if (!empty.length) { toast('자리가 꽉 찼어요! 같은 친구끼리 합체해 봐요'); beep(200, 0.15, 'square', 0.05); return; }
-  if (S.coins < c) { toast('코인이 모자라요. 싸워서 코인을 모아요!'); beep(200, 0.15, 'square', 0.05); return; }
+  if (!empty.length) { toast('자리가 꽉 찼어요! 같은 친구끼리 합체해 봐요'); sfx('nope'); return; }
+  if (S.coins < c) { toast('코인이 모자라요. 싸워서 코인을 모아요!'); sfx('nope'); return; }
   S.coins -= c;
   const i = empty[Math.floor(Math.random() * empty.length)];
   const el = ELS[Math.floor(Math.random() * ELS.length)];
   const u = { el, lv: summonLv(S.stage) };
   S.grid[i] = u; pops[i] = 1;
   const p = cellPos('p', i); burst(p.x, p.y, EL[el].c, 8);
-  beep(520, 0.1, 'triangle', 0.1, 1.6);
+  sfx('summon', { gap: 0.06 });
   if (discover(u)) toast('새 친구! ' + unitName(u) + ' Lv.' + u.lv, 1.6);
   save();
 }
@@ -388,7 +462,7 @@ function startBattle() {
   enemy.forEach((u, i) => { if (u) F.push(mkF('e', u, i)); });
   B = { F, proj: [], t: 0, over: null, overT: 0 };
   mode = 'battle'; speed = 1;
-  tune([523, 659, 784], 0.07, 'square');
+  sfx('start', { duck: 0.9 }); Music.play('battle');
 }
 function hitF(a, b) {
   if (b.dead) return;
@@ -396,8 +470,8 @@ function hitF(a, b) {
   const dmg = Math.max(1, a.atk * (adv ? 1.6 : 1) * (0.9 + Math.random() * 0.2));
   b.hp -= dmg; b.hit = 0.15;
   floatText(b.x + (Math.random() - 0.5) * 16, b.y - 30, adv ? '최고! ' + fmt(dmg) : fmt(dmg), adv ? '#ffd23f' : '#fff');
-  beep(adv ? 700 : 420, 0.06, 'triangle', 0.05);
-  if (b.hp <= 0) { b.dead = true; b.deadT = 0; burst(b.x, b.y, info(b.el).c, 14); beep(330, 0.2, 'sine', 0.08, 0.5); }
+  sfx(adv ? 'crit' : 'hit', { gap: 0.05, vol: 0.75, rate: 0.9 + Math.random() * 0.2 });
+  if (b.hp <= 0) { b.dead = true; b.deadT = 0; burst(b.x, b.y, info(b.el).c, 14); sfx('poof', { gap: 0.06 }); }
 }
 function stepBattle(dt) {
   B.t += dt;
@@ -412,7 +486,7 @@ function stepBattle(dt) {
     if (bd > f.range) { const k = Math.min(1, f.spd * dt / bd); f.x += (best.x - f.x) * k; f.y += (best.y - f.y) * k; }
     else if (f.cdT <= 0) {
       f.cdT = f.cd; f.lunge = 0.18;
-      if (f.range > 60) { B.proj.push({ x: f.x, y: f.y - 12, t: best, src: f }); beep(900, 0.05, 'sine', 0.03, 0.6); }
+      if (f.range > 60) { B.proj.push({ x: f.x, y: f.y - 12, t: best, src: f }); sfx('shoot', { gap: 0.08, vol: 0.6 }); }
       else hitF(f, best);
     }
     for (const g of F) {
@@ -445,12 +519,12 @@ function endBattle(win) {
     if (S.stage >= MAXSTAGE) { S.cleared = true; result.final = true; }
     else S.stage++;
     result.slUp = summonLv(S.stage) > oldSl ? summonLv(S.stage) : 0;
-    tune(result.final ? [523, 659, 784, 1047, 1319, 1568, 2093] : [523, 659, 784, 1047, 1319], 0.1);
+    sfx(result.final ? 'finale' : 'win', { duck: result.final ? 3.6 : 1.4 }); sfx('coin', { delay: result.final ? 3.2 : 1.1, gap: 0 });
     for (let i = 0; i < 5; i++) burst(260 + i * 110, 200, info(ELS[i]).c, result.final ? 30 : 14);
-  } else tune([440, 392, 349], 0.15, 'sine');
+  } else { sfx('lose', { duck: 1.4 }); sfx('coin', { delay: 1.2, gap: 0, vol: 0.7 }); }
   save(); mode = 'result';
 }
-function closeResult() { mode = 'merge'; B = null; result = null; enemy = genEnemies(S.stage); beep(660, 0.08); }
+function closeResult() { mode = 'merge'; B = null; result = null; enemy = genEnemies(S.stage); sfx('tap'); Music.play('calm'); }
 
 /* ---------- 수학 문제 (지면 코인을 더 받을 기회) ---------- */
 const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
@@ -464,28 +538,29 @@ function makeProblem() {
   if (op === '-' && a < b) [a, b] = [b, a]; // 답이 0보다 작지 않게
   return { a, b, op, ans: op === '+' ? a + b : a - b };
 }
-function openQuiz() { Q = Object.assign(makeProblem(), { input: '', tries: 0, state: 'ask', t: 0 }); mode = 'quiz'; beep(660, 0.08); }
+function openQuiz() { Q = Object.assign(makeProblem(), { input: '', tries: 0, state: 'ask', t: 0 }); mode = 'quiz'; sfx('tap'); }
 function quizKey(k) {
   if (!Q || Q.state !== 'ask') return;
-  if (k === '←') { Q.input = Q.input.slice(0, -1); beep(400, 0.04); return; }
+  if (k === '←') { Q.input = Q.input.slice(0, -1); sfx('key', { rate: 0.8, gap: 0 }); return; }
   if (k === '확인') {
     if (!Q.input) return;
     if (Number(Q.input) === Q.ans) {
       const bonus = quizReward(result.stage);
       S.coins += bonus; save();
       Q.state = 'right'; Q.bonus = bonus; Q.t = 0;
-      tune([659, 784, 1047, 1319], 0.08);
+      sfx('correct', { duck: 2.2 }); sfx('coin', { delay: 0.6, gap: 0 });
       burst(480, 200, '#ffd23f', 24); burst(480, 200, '#5fc95f', 16);
     } else {
-      Q.tries++; Q.t = 0; Q.shake = 0.4; beep(200, 0.2, 'square', 0.06);
+      Q.tries++; Q.t = 0; Q.shake = 0.4; sfx('wrong');
       if (Q.tries >= 3) Q.state = 'reveal'; else Q.input = '';
     }
     return;
   }
-  if (Q.input.length < 3) { Q.input += k; beep(520 + Number(k) * 30, 0.05, 'triangle', 0.07); }
+  if (Q.input.length < 3) { Q.input += k; sfx('key', { rate: 0.9 + Number(k) * 0.035, gap: 0 }); }
 }
 function closeQuiz() { result.quizDone = true; Q = null; mode = 'result'; }
 addEventListener('keydown', e => {
+  audioInit();
   if (mode !== 'quiz') return;
   if (/^[0-9]$/.test(e.key)) quizKey(e.key);
   else if (e.key === 'Backspace') quizKey('←');
@@ -496,7 +571,7 @@ addEventListener('keydown', e => {
 function toLogical(e) { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left - ox) / scale, y: (e.clientY - r.top - oy) / scale }; }
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('pointerdown', e => {
-  if (AC && AC.state === 'suspended') AC.resume();
+  audioInit();
   const p = toLogical(e);
   for (let k = btns.length - 1; k >= 0; k--) {
     const b = btns[k];
@@ -504,7 +579,7 @@ cv.addEventListener('pointerdown', e => {
   }
   if (mode !== 'merge') return;
   const i = cellAt(p.x, p.y);
-  if (i >= 0 && S.grid[i]) { drag = { i, x: p.x, y: p.y, sx: p.x, sy: p.y }; cv.setPointerCapture(e.pointerId); beep(600, 0.04, 'sine', 0.05); }
+  if (i >= 0 && S.grid[i]) { drag = { i, x: p.x, y: p.y, sx: p.x, sy: p.y }; cv.setPointerCapture(e.pointerId); sfx('tap', { vol: 0.6 }); }
 });
 cv.addEventListener('pointermove', e => { if (!drag) return; const p = toLogical(e); drag.x = p.x; drag.y = p.y; });
 cv.addEventListener('pointerup', () => {
@@ -525,31 +600,32 @@ cv.addEventListener('pointerup', () => {
   if (j < 0 || j === d.i) return;
   const b = S.grid[j];
   const m = mergeResult(a, b);
-  if (!b) { S.grid[j] = a; S.grid[d.i] = null; pops[j] = 0.5; beep(500, 0.05); }
+  if (!b) { S.grid[j] = a; S.grid[d.i] = null; pops[j] = 0.5; sfx('move'); }
   else if (m) {
     const hybridNew = m.el !== a.el;
     S.grid[j] = m; S.grid[d.i] = null; pops[j] = 1; S.merged++;
     const p = cellPos('p', j);
     burst(p.x, p.y, info(a.el).c, 16); burst(p.x, p.y, info(b.el).c, hybridNew ? 16 : 0); burst(p.x, p.y, '#fff7b0', 8);
     rings.push({ x: p.x, y: p.y, t: 0, color: info(m.el).c });
-    if (hybridNew) { rings.push({ x: p.x, y: p.y, t: -0.15, color: '#ffd23f' }); tune([523, 659, 784, 1047, 1319, 1568], 0.07); }
-    else { const f = Math.pow(1.012, m.lv); tune([523 * f, 659 * f, 784 * f], 0.06); }
+    if (hybridNew) { rings.push({ x: p.x, y: p.y, t: -0.15, color: '#ffd23f' }); sfx('evolve', { duck: 1.2 }); }
+    else sfx('merge', { rate: Math.min(1.3, 0.9 + m.lv * 0.004) });
     const isNew = discover(m);
     if (hybridNew) toast('혼합 진화! ' + unitName(m) + ' Lv.' + m.lv, 2.4);
     else if (m.lv === MAXLV) toast('최고 레벨 달성! ' + unitName(m) + ' Lv.99', 2.4);
     else if (isNew) toast('진화! ' + unitName(m) + ' Lv.' + m.lv, 1.6);
   } else if (b.el === a.el && b.lv === a.lv) { toast('이미 최고 레벨이에요!'); }
-  else { S.grid[j] = a; S.grid[d.i] = b; pops[j] = 0.4; pops[d.i] = 0.4; beep(450, 0.05); }
+  else { S.grid[j] = a; S.grid[d.i] = b; pops[j] = 0.4; pops[d.i] = 0.4; sfx('move'); }
   save();
 });
 cv.addEventListener('pointercancel', () => { drag = null; });
 
 function resetAll() {
   if (confirm('처음부터 다시 할까요? 모은 친구와 코인이 모두 사라져요.')) {
-    const m = S.muted, q = S.quiz; S = fresh(); S.muted = m; S.quiz = q; save(); enemy = genEnemies(1); mode = 'merge'; toast('새로 시작해요!');
+    const a = S.sfxOff, b = S.musicOff, q = S.quiz; S = fresh(); S.sfxOff = a; S.musicOff = b; S.quiz = q; save(); enemy = genEnemies(1); mode = 'merge'; toast('새로 시작해요!');
   }
 }
-function toggleMute() { S.muted = !S.muted; save(); beep(660, 0.08); }
+function toggleSfx() { S.sfxOff = !S.sfxOff; save(); if (sfxGain) sfxGain.gain.value = S.sfxOff ? 0 : SFX_VOL; sfx('tap'); }
+function toggleMusic() { S.musicOff = !S.musicOff; save(); Music.setOn(!S.musicOff); sfx('tap'); }
 
 /* ---------- 화면 그리기 ---------- */
 function drawBackground() {
@@ -619,18 +695,27 @@ function drawTop() {
   for (let i = 0; i < 8; i++) { ctx.rotate(Math.PI / 4); ctx.fillRect(-2.5, -12, 5, 6); }
   ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#ffd98a'; ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-  if (mode === 'merge') btns.push({ x: gx, y: gy, w: 40, h: 34, fn: () => { mode = 'settings'; beep(660, 0.06); } });
-  // 소리 버튼
+  if (mode === 'merge') btns.push({ x: gx, y: gy, w: 40, h: 34, fn: () => { mode = 'settings'; sfx('tap'); } });
+  // 음악 버튼 (♪)
+  const nx = W - 152, ny = 13;
+  rr(nx, ny, 40, 34, 10); ctx.fillStyle = S.musicOff ? '#cfc6d8' : '#b9f0a8'; ctx.fill();
+  ctx.fillStyle = '#3b2b4f'; ctx.strokeStyle = '#3b2b4f'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.ellipse(nx + 14, ny + 25, 5, 4, -0.4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(nx + 27, ny + 22, 5, 4, -0.4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(nx + 18, ny + 24); ctx.lineTo(nx + 18, ny + 9); ctx.lineTo(nx + 31, ny + 6); ctx.lineTo(nx + 31, ny + 21); ctx.stroke();
+  if (S.musicOff) { ctx.strokeStyle = '#c0304a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(nx + 7, ny + 6); ctx.lineTo(nx + 33, ny + 29); ctx.stroke(); }
+  btns.push({ x: nx, y: ny, w: 40, h: 34, fn: toggleMusic });
+  // 효과음 버튼
   const mx = W - 56, my = 13;
-  rr(mx, my, 40, 34, 10); ctx.fillStyle = S.muted ? '#cfc6d8' : '#8fd3ff'; ctx.fill();
+  rr(mx, my, 40, 34, 10); ctx.fillStyle = S.sfxOff ? '#cfc6d8' : '#8fd3ff'; ctx.fill();
   ctx.fillStyle = '#3b2b4f'; ctx.beginPath();
   ctx.moveTo(mx + 9, my + 13); ctx.lineTo(mx + 15, my + 13); ctx.lineTo(mx + 22, my + 7); ctx.lineTo(mx + 22, my + 27);
   ctx.lineTo(mx + 15, my + 21); ctx.lineTo(mx + 9, my + 21); ctx.closePath(); ctx.fill();
   ctx.strokeStyle = '#3b2b4f'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.beginPath();
-  if (S.muted) { ctx.moveTo(mx + 26, my + 12); ctx.lineTo(mx + 34, my + 22); ctx.moveTo(mx + 34, my + 12); ctx.lineTo(mx + 26, my + 22); }
+  if (S.sfxOff) { ctx.moveTo(mx + 26, my + 12); ctx.lineTo(mx + 34, my + 22); ctx.moveTo(mx + 34, my + 12); ctx.lineTo(mx + 26, my + 22); }
   else { ctx.arc(mx + 23, my + 17, 6, -0.9, 0.9); ctx.moveTo(mx + 23 + 10 * Math.cos(-0.9), my + 17 + 10 * Math.sin(-0.9)); ctx.arc(mx + 23, my + 17, 10, -0.9, 0.9); }
   ctx.stroke();
-  btns.push({ x: mx, y: my, w: 40, h: 34, fn: toggleMute });
+  btns.push({ x: mx, y: my, w: 40, h: 34, fn: toggleSfx });
 }
 
 function drawMergeUnits() {
@@ -674,7 +759,7 @@ function drawBattle() {
 function drawBottom() {
   const cx = (PX + COLS * CELL + EX) / 2;
   if (mode === 'battle') {
-    button(cx - 120, 452, 240, 70, speed === 1 ? '빠르게 보기 ▶▶' : '천천히 보기 ▶', '#8fb8ff', () => { speed = speed === 1 ? 2.5 : 1; beep(700, 0.05); });
+    button(cx - 120, 452, 240, 70, speed === 1 ? '빠르게 보기 ▶▶' : '천천히 보기 ▶', '#8fb8ff', () => { speed = speed === 1 ? 2.5 : 1; sfx('tap'); });
     return;
   }
   const c = cost(), full = !S.grid.includes(null);
@@ -759,14 +844,14 @@ function drawSettings() {
   const row = (y, label, opts, cur, set) => {
     text(label, 300, y + 26, 17, '#3b2b4f');
     opts.forEach(([v, name], i) => {
-      button(370 + i * 112, y, 104, 52, name, cur === v ? '#ff8a4c' : '#cfc6d8', () => { set(v); save(); beep(700, 0.05); }, null, false, 18);
+      button(370 + i * 112, y, 104, 52, name, cur === v ? '#ff8a4c' : '#cfc6d8', () => { set(v); save(); sfx('tap'); }, null, false, 18);
     });
   };
   row(180, '자릿수', [['1', '한 자리'], ['2', '두 자리'], ['mix', '섞어서']], S.quiz.digits, v => S.quiz.digits = v);
   row(256, '계산', [['+', '더하기'], ['-', '빼기'], ['+-', '둘 다']], S.quiz.ops, v => S.quiz.ops = v);
   const ex = (() => { const d = S.quiz.digits; return d === '1' ? '3 + 5' : d === '2' ? '23 + 14' : '3 + 14'; })();
   text('예: ' + (S.quiz.ops === '-' ? ex.replace('+', '−') : ex) + ' = ?', W / 2, 340, 16, '#6b4a8f');
-  button(355, 380, 250, 60, '닫기', '#5fc95f', () => { mode = 'merge'; beep(660, 0.06); });
+  button(355, 380, 250, 60, '닫기', '#5fc95f', () => { mode = 'merge'; sfx('tap'); });
 }
 
 function drawFx(dt) {
