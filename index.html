@@ -93,13 +93,15 @@ for (const k in SHEETS) { const im = new Image(); im.src = 'assets/' + k + '.web
 const BG = new Image(); BG.src = 'assets/background.webp';
 const hyForm = lv => lv >= MAXLV ? 4 : Math.max(0, Math.min(3, band(lv) - 1));
 // 레벨 → 그림 번호: Lv1~25는 레벨마다 새 모습, 그 뒤로는 레벨 몇 개마다 바뀜
-const SKIP = { fire: 2 };   // 불 Lv1~2 그림(작은 불씨)은 너무 작아서 건너뜀
+// 원소별로 쓸 그림 순서. 불은 시트의 Lv1~2(작은 불씨)를 빼고,
+// 서로 비슷한 불꽃(시트 Lv3~10) 중 3장만 써서 레벨이 오를 때 모습이 확 바뀌게 함
+const ORDER = { fire: [2, 5, 9].concat(Array.from({ length: 40 }, (_, i) => 10 + i)) };
 const EARLY = 25;
 function spriteIndex(k, lv) {
   if (isHybrid(k)) return hyForm(lv);
-  const s = SKIP[k] || 0, n = SHEETS[k] - s;
-  if (lv <= EARLY) return s + lv - 1;
-  return s + EARLY + Math.min(n - EARLY - 1, Math.floor((lv - EARLY - 1) * (n - EARLY) / (MAXLV - EARLY)));
+  const ord = ORDER[k], n = ord ? ord.length : SHEETS[k];
+  const i = lv <= EARLY ? lv - 1 : EARLY + Math.min(n - EARLY - 1, Math.floor((lv - EARLY - 1) * (n - EARLY) / (MAXLV - EARLY)));
+  return ord ? ord[i] : i;
 }
 const sprCache = {};
 // 한 칸을 잘라 투명한 여백을 걷어 내고 보관 (적은 붉은 빛을 미리 둘러 둠)
