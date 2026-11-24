@@ -63,9 +63,11 @@ function hybridOf(a, b) {
 }
 const band = lv => Math.floor(lv / HYBRID_LV);
 // 두 친구가 합쳐지면 무엇이 되는지 (안 되면 null)
+// 같은 원소끼리는 레벨이 달라도 합체: 높은 쪽 레벨 + 1 (단, 레벨 차이가 10 이상이면 안 됨)
+const MERGE_GAP = 9;
 function mergeResult(a, b) {
   if (!a || !b) return null;
-  if (a.el === b.el && a.lv === b.lv && a.lv < MAXLV) return { el:a.el, lv:a.lv + 1 };
+  if (a.el === b.el) { const hi = Math.max(a.lv, b.lv), lo = Math.min(a.lv, b.lv); return hi < MAXLV && hi - lo <= MERGE_GAP ? { el:a.el, lv:hi + 1 } : null; }
   if (!isHybrid(a.el) && !isHybrid(b.el) && a.el !== b.el && a.lv >= HYBRID_LV && b.lv >= HYBRID_LV && band(a.lv) === band(b.lv)) {
     const h = hybridOf(a.el, b.el);
     if (h) return { el:h, lv:Math.min(MAXLV, Math.max(a.lv, b.lv) + 1) };
@@ -166,7 +168,7 @@ function sprite(k, idx, foe) {
 /* ---------- 저장 (이 기기 안에만) ---------- */
 const SAVE = 'spirit-pals-v2';
 function fresh() {
-  return { coins:20, stage:1, grid:Array(N).fill(null), found:{}, merged:0, sfxOff:false, musicOff:false, cleared:false,
+  return { coins:20, stage:1, grid:Array(N).fill(null), found:{}, merged:0, pick:'water', sfxOff:false, musicOff:false, cleared:false,
            quiz:{ digits:'1', ops:'+' } };
 }
 function load() {
@@ -190,8 +192,11 @@ function save() { try { localStorage.setItem(SAVE, JSON.stringify(S)); } catch (
 let S = load();
 
 /* ---------- 300판 동안의 성장 곡선 ----------
-   부르는 친구 레벨: 1판 Lv1 → 291판부터 Lv97. 같은 친구 둘 = +1 레벨이라 Lv97 넷이면 Lv99. */
-const summonLv = st => Math.min(MAXLV - 2, 1 + Math.floor((Math.min(st, MAXSTAGE) - 1) * (MAXLV - 3) / 290));
+   부르는 친구 레벨은 30판마다 한 단계: Lv1 → 30판 Lv10 → 60판 Lv20 … → 270판 Lv90.
+   같은 원소끼리 합체할 때마다 +1 이라, Lv90 친구에 9번 더 합치면 Lv99. */
+const summonLv = st => Math.max(1, Math.min(90, Math.floor(Math.min(st, MAXSTAGE) / 30) * 10));
+// 상대 레벨은 판마다 조금씩: 1판 Lv1 → 300판 Lv99
+const enemyLv = st => 1 + Math.floor((Math.min(st, MAXSTAGE) - 1) * (MAXLV - 1) / (MAXSTAGE - 1));
 const cost = () => 4 + Math.floor(S.stage * 0.6);
 const winReward = st => 12 + st * 3;
 const loseReward = st => 3 + Math.floor(st / 2);
@@ -207,9 +212,9 @@ function rng(seed) {
   };
 }
 function genEnemies(st) {
-  const R = rng(st * 7919 + 17), sl = summonLv(st);
+  const R = rng(st * 7919 + 17), sl = enemyLv(st);
   const boss = st === MAXSTAGE;
-  let b = boss ? 40 : Math.min(26, 2 + Math.floor(st * 0.3));
+  let b = boss ? 40 : Math.min(34, 3 + Math.floor(st * 0.45));
   const maxOff = Math.min(4, 1 + Math.floor(st / 8));
   const g = Array(N).fill(null);
   while (b > 0) {
@@ -442,7 +447,7 @@ function buy() {
   if (S.coins < c) { toast('코인이 모자라요. 싸워서 코인을 모아요!'); sfx('nope'); return; }
   S.coins -= c;
   const i = empty[Math.floor(Math.random() * empty.length)];
-  const el = ELS[Math.floor(Math.random() * ELS.length)];
+  const el = EL[S.pick] ? S.pick : 'water';  // 고른 원소
   const u = { el, lv: summonLv(S.stage) };
   S.grid[i] = u; pops[i] = 1;
   const p = cellPos('p', i); burst(p.x, p.y, EL[el].c, 8);
@@ -597,6 +602,14 @@ cv.addEventListener('pointerup', () => {
     toast(unitName(a) + ' Lv.' + a.lv + '  체력 ' + fmt(st.maxhp) + ' · 힘 ' + fmt(st.atk) + tip, 2.2);
     return;
   }
+  // 친구 부르기 버튼 위에 놓으면: 친구를 숲으로 보내고 코인 조금 돌려받기
+  if (d.x >= PX - 6 && d.x <= PX + COLS * CELL + 6 && d.y >= 440) {
+    const back = Math.max(1, Math.floor(cost() / 2));
+    S.grid[d.i] = null; S.coins += back; save();
+    const p = cellPos('p', d.i); burst(p.x, p.y, info(a.el).c, 10);
+    toast('잘 가! ' + unitName(a) + ' 숲으로 돌아갔어요 (+' + back + ' 코인)', 1.8); sfx('poof'); sfx('coin', { delay: 0.2, gap: 0 });
+    return;
+  }
   if (j < 0 || j === d.i) return;
   const b = S.grid[j];
   const m = mergeResult(a, b);
@@ -613,7 +626,7 @@ cv.addEventListener('pointerup', () => {
     if (hybridNew) toast('혼합 진화! ' + unitName(m) + ' Lv.' + m.lv, 2.4);
     else if (m.lv === MAXLV) toast('최고 레벨 달성! ' + unitName(m) + ' Lv.99', 2.4);
     else if (isNew) toast('진화! ' + unitName(m) + ' Lv.' + m.lv, 1.6);
-  } else if (b.el === a.el && b.lv === a.lv) { toast('이미 최고 레벨이에요!'); }
+  } else if (b.el === a.el) { toast(Math.max(a.lv, b.lv) >= MAXLV ? '이미 최고 레벨이에요!' : '레벨 차이가 10 넘게 나면 합체할 수 없어요'); sfx('nope'); }
   else { S.grid[j] = a; S.grid[d.i] = b; pops[j] = 0.4; pops[d.i] = 0.4; sfx('move'); }
   save();
 });
@@ -661,6 +674,20 @@ function drawBoard() {
   }
   outlined('내 친구들', PX + COLS * CELL / 2, GY - 12, 12, '#fff', '#2d4a14');
   outlined('말썽 정령들', EX + COLS * CELL / 2, GY - 12, 12, '#ffd0e0', '#5a1030');
+}
+
+// 왼쪽: 부를 친구 고르기 (물·불·바람·땅·전기)
+function drawPicker() {
+  if (mode === 'battle') return;
+  outlined('부를 친구', 60, GY - 12, 12, '#fff', '#2d4a14');
+  ELS.forEach((el, i) => {
+    const x = 16, y = GY + i * 72, w = 88, h = 66, on = S.pick === el;
+    rr(x, y, w, h, 14); ctx.fillStyle = on ? 'rgba(255,240,170,0.95)' : 'rgba(255,255,255,0.45)'; ctx.fill();
+    if (on) { ctx.lineWidth = 4; ctx.strokeStyle = '#ffb02e'; ctx.stroke(); }
+    drawUnit(x + 28, y + 30, el, summonLv(S.stage), false, { s: 0.62, badge: false });
+    text(EL[el].label, x + 66, y + 33, 15, on ? '#7a3510' : '#3b2b4f');
+    if (mode === 'merge') btns.push({ x, y, w, h, fn: () => { S.pick = el; save(); sfx('tap'); } });
+  });
 }
 
 function drawMiddle() {
@@ -763,12 +790,16 @@ function drawBottom() {
     return;
   }
   const c = cost(), full = !S.grid.includes(null);
-  button(PX - 6, 448, COLS * CELL + 12, 76, '친구 부르기', '#ffa24c', buy, (x, y) => {
+  if (drag) { // 끌고 있을 때는 '보내기' 자리로 바뀜
+    button(PX - 6, 448, COLS * CELL + 12, 76, '여기에 놓으면 보내기', '#9aa7b8', () => {}, (x, y) => {
+      coinIcon(x - 20, y, 9); outlined('+' + fmt(Math.max(1, Math.floor(c / 2))), x + 8, y, 16, '#fff');
+    }, false, 20);
+  } else button(PX - 6, 448, COLS * CELL + 12, 76, EL[S.pick].label + ' 친구 부르기', '#ffa24c', buy, (x, y) => {
     coinIcon(x - 44, y, 9); outlined(fmt(c), x - 18, y, 16, '#fff');
     outlined('Lv.' + summonLv(S.stage), x + 40, y, 15, '#fff6c0', '#7a3510');
   }, S.coins < c || full);
   button(EX - 6, 448, COLS * CELL + 12, 76, S.cleared ? '다시 도전!' : '싸우자!', '#ff6b8a', startBattle, null, !S.grid.some(Boolean), 26);
-  if (S.merged === 0 && S.grid.filter(Boolean).length >= 2) outlined('같은 친구 둘을 끌어다 겹치면 합체!', cx, 350, 14, '#fff', '#7a3510');
+  if (S.merged === 0 && S.grid.filter(Boolean).length >= 2) outlined('같은 원소 친구끼리 겹치면 합체!', cx, 350, 14, '#fff', '#7a3510');
   else if (S.grid.some(u => u && !isHybrid(u.el) && u.lv >= HYBRID_LV)) outlined('Lv' + HYBRID_LV + '+ 다른 원소끼리 겹치면 혼합 진화!', cx, 350, 13, '#efe6ff', '#4a2a8a');
   if (S.cleared) outlined('★ 300판 모두 클리어! ★', cx, 384, 17, '#ffd23f', '#7a3510');
   text('처음부터 다시', cx, 505, 12, 'rgba(255,255,255,0.8)', 'center', 'normal');
@@ -907,6 +938,7 @@ function frame(t) {
   drawBackground();
   btns = [];
   drawBoard();
+  drawPicker();
   drawMiddle();
   if (mode === 'battle') drawBattle(); else drawMergeUnits();
   drawTop();
