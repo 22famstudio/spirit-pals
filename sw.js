@@ -1,10 +1,10 @@
-﻿// 게임 파일을 기기에 저장해 두고, 인터넷이 없어도 실행되게 합니다.
+// 게임 파일을 기기에 저장해 두고, 인터넷이 없어도 실행되게 합니다.
 // 그림 파일을 바꾼 뒤에는 VERSION 숫자를 올려야 기기에 새 그림이 들어갑니다.
-const VERSION = 'spirit-pals-7';
+const VERSION = 'spirit-pals-8';
 const SHEETS = ['fire', 'water', 'wind', 'earth', 'electric', 'wind_electric', 'water_electric', 'earth_water', 'earth_fire'];
 const SFX = ['tap', 'key', 'summon', 'move', 'merge', 'evolve', 'coin', 'hit', 'crit', 'shoot', 'poof',
              'correct', 'win', 'lose', 'start', 'finale', 'wrong', 'nope'];
-const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png']
+const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './assets/lobby.webp']
   .concat(SHEETS.map(s => './assets/' + s + '.webp'))
   .concat(SFX.map(s => './audio/sfx/' + s + '.wav'));
 // 배경음악(audio/bgm*.m4a)은 용량이 커서 미리 저장하지 않고, 인터넷이 될 때 바로 재생함
