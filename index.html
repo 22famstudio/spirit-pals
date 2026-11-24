@@ -969,7 +969,7 @@ function loadP() {
 let P = loadP();
 function saveP() { try { localStorage.setItem(PKEY, JSON.stringify(P)); } catch (e) {} }
 const dayKey = (t = Date.now()) => { const d = new Date(t); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
-function nameCall() { // 현동 → ' 현동아', 지우 → ' 지우야'
+function nameCall() { // 받침 있으면 '아', 없으면 '야' (예: 민준아, 지우야)
   const n = (P.name || '').trim(); if (!n) return '';
   const c = n.charCodeAt(n.length - 1);
   return ' ' + n + (c >= 0xAC00 && c <= 0xD7A3 && (c - 0xAC00) % 28 !== 0 ? '아' : '야');
