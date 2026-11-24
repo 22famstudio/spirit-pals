@@ -7,19 +7,18 @@
      'self'는 같은 폴더의 그림·아이콘·manifest·오프라인용 sw.js만 허용합니다. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; connect-src 'self'; form-action 'none'">
 <title>정령 친구 합체!</title>
-<meta name="theme-color" content="#bfe4ff">
+<meta name="theme-color" content="#4d7a2a">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="정령 합체">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="format-detection" content="telephone=no">
 <style>
-  html,body{margin:0;height:100%;background:#fff4dd linear-gradient(#bfe4ff,#fff4dd 45%,#d9f3c6);overflow:hidden;touch-action:none;overscroll-behavior:none;
-    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;position:fixed;inset:0;box-sizing:border-box;
-    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  html,body{margin:0;height:100%;background:#4d7a2a;overflow:hidden;touch-action:none;overscroll-behavior:none;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;position:fixed;inset:0}
   canvas{display:block;width:100%;height:100%;touch-action:none}
 </style>
 </head>
@@ -28,8 +27,10 @@
 <script>
 'use strict';
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-const W = 420, H = 780, COLS = 5, ROWS = 3, N = COLS * ROWS, CELL = 76;
-const GX = (W - COLS * CELL) / 2, EY = 84, PY = 404, MAXLV = 99, HYBRID_LV = 20;
+// 가로 화면 기준 크기
+const W = 960, H = 540, COLS = 3, ROWS = 5, N = COLS * ROWS, CELL = 72;
+const PX = 120, EX = 624, GY = 76;              // 내 칸 / 상대 칸 / 위쪽 여백
+const MAXLV = 99, HYBRID_LV = 20, MAXSTAGE = 300;
 const FONT = "'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif";
 
 /* ---------- 원소와 혼합 ---------- */
@@ -79,38 +80,93 @@ function unitName(u) {
   if (isHybrid(u.el)) return HY[u.el].names[hyForm(u.lv)];
   return info(u.el).label + ' 정령';
 }
+function beatsTarget(a, b) {
+  const t = info(a).beats;
+  return isHybrid(b) ? HY[b].pair.some(p => t.includes(p)) : t.includes(b);
+}
 
-/* ---------- 그림 (assets 폴더의 스프라이트 묶음) ---------- */
+/* ---------- 그림 ---------- */
 const SPR = 160;
 const SHEETS = { fire:50, wind:50, electric:50, earth:50, water:47, wind_electric:5, water_electric:5, earth_water:5, earth_fire:5 };
 const IMGS = {};
 for (const k in SHEETS) { const im = new Image(); im.src = 'assets/' + k + '.webp'; IMGS[k] = im; }
+const BG = new Image(); BG.src = 'assets/background.webp';
 const hyForm = lv => lv >= MAXLV ? 4 : Math.max(0, Math.min(3, band(lv) - 1));
-const SKIP = { fire: 2 }; // 불 Lv1~2 그림(작은 불씨)은 너무 작아서 건너뜀
+// 레벨 → 그림 번호: Lv1~25는 레벨마다 새 모습, 그 뒤로는 레벨 몇 개마다 바뀜
+const SKIP = { fire: 2 };   // 불 Lv1~2 그림(작은 불씨)은 너무 작아서 건너뜀
+const EARLY = 25;
 function spriteIndex(k, lv) {
   if (isHybrid(k)) return hyForm(lv);
   const s = SKIP[k] || 0, n = SHEETS[k] - s;
-  return s + Math.min(n - 1, Math.floor((lv - 1) * n / MAXLV));
+  if (lv <= EARLY) return s + lv - 1;
+  return s + EARLY + Math.min(n - EARLY - 1, Math.floor((lv - EARLY - 1) * (n - EARLY) / (MAXLV - EARLY)));
 }
 const sprCache = {};
-// 한 칸을 잘라 캔버스로 보관 (적은 붉은 빛을 둘러서 미리 그려 둠)
+// 한 칸을 잘라 투명한 여백을 걷어 내고 보관 (적은 붉은 빛을 미리 둘러 둠)
 function sprite(k, idx, foe) {
   const key = k + idx + (foe ? 'e' : '');
   if (sprCache[key]) return sprCache[key];
   const im = IMGS[k];
   if (!im.complete || !im.naturalWidth) return null;
-  const cols = SHEETS[k] > 5 ? 10 : 5, pad = 12;
-  const c = document.createElement('canvas'); c.width = c.height = SPR + pad * 2;
+  const cols = SHEETS[k] > 5 ? 10 : 5;
+  const sx = (idx % cols) * SPR, sy = Math.floor(idx / cols) * SPR;
+  // 칸 하나를 따로 꺼내 둠
+  const t = document.createElement('canvas'); t.width = t.height = SPR;
+  const tg = t.getContext('2d'); tg.drawImage(im, sx, sy, SPR, SPR, 0, 0, SPR, SPR);
+  let bx = 0, by = 0, bw = SPR, bh = SPR, ux0 = 0, uy0 = 0, ux1 = SPR, uy1 = SPR;
+  try {
+    // 덩어리 찾기: 가장 큰 덩어리(몸통)로 크기를 재고, 몸통 아래 따로 떨어진 얼룩(그림자 자국)은 지움
+    const id = tg.getImageData(0, 0, SPR, SPR), a = id.data, lab = new Int32Array(SPR * SPR), comps = [];
+    for (let p = 0; p < SPR * SPR; p++) {
+      if (lab[p] || a[p * 4 + 3] <= 128) continue;
+      const cmp = { n: 0, x0: SPR, y0: SPR, x1: 0, y1: 0, id: comps.length + 1 }, st = [p]; lab[p] = cmp.id;
+      while (st.length) {
+        const q = st.pop(), x = q % SPR, y = (q / SPR) | 0;
+        cmp.n++; if (x < cmp.x0) cmp.x0 = x; if (x > cmp.x1) cmp.x1 = x; if (y < cmp.y0) cmp.y0 = y; if (y > cmp.y1) cmp.y1 = y;
+        for (const r of [q - 1, q + 1, q - SPR, q + SPR]) {
+          if (r < 0 || r >= SPR * SPR || lab[r] || a[r * 4 + 3] <= 128) continue;
+          if ((r === q - 1 && x === 0) || (r === q + 1 && x === SPR - 1)) continue;
+          lab[r] = cmp.id; st.push(r);
+        }
+      }
+      comps.push(cmp);
+    }
+    if (comps.length) {
+      const main = comps.reduce((m, c) => c.n > m.n ? c : m);
+      const drop = new Set(comps.filter(c => c !== main && c.y0 > main.y1 - 4 && c.n < main.n * 0.35).map(c => c.id));
+      if (drop.size) {
+        for (let p = 0; p < SPR * SPR; p++) if (drop.has(lab[p])) a[p * 4 + 3] = 0;
+        // 얼룩 가장자리의 반투명 부분도 정리
+        for (let p = 0; p < SPR * SPR; p++) if (!lab[p] && a[p * 4 + 3] > 0 && (p / SPR | 0) > main.y1) a[p * 4 + 3] = 0;
+        tg.putImageData(id, 0, 0);
+      }
+      bx = main.x0; by = main.y0; bw = main.x1 - main.x0 + 1; bh = main.y1 - main.y0 + 1;
+      const kept = comps.filter(c => !drop.has(c.id) && c.n > 6);
+      ux0 = Math.min(...kept.map(c => c.x0)); uy0 = Math.min(...kept.map(c => c.y0));
+      ux1 = Math.max(...kept.map(c => c.x1)) + 1; uy1 = Math.max(...kept.map(c => c.y1)) + 1;
+    }
+  } catch (e) {}
+  // 크기는 몸통으로 재고, 그릴 때는 남은 부분(작은 물방울·빛)도 함께
+  const ex = 4, x0 = Math.max(0, ux0 - ex), y0 = Math.max(0, uy0 - ex);
+  const x1 = Math.min(SPR, ux1 + ex), y1 = Math.min(SPR, Math.max(uy1, by + bh) + ex);
+  const pad = 10, c = document.createElement('canvas');
+  c.width = x1 - x0 + pad * 2; c.height = y1 - y0 + pad * 2;
   const g = c.getContext('2d');
-  if (foe) { g.shadowColor = 'rgba(230,20,90,0.95)'; g.shadowBlur = 10; }
-  g.drawImage(im, (idx % cols) * SPR, Math.floor(idx / cols) * SPR, SPR, SPR, pad, pad, SPR, SPR);
-  if (foe) g.drawImage(c, 0, 0); // 빛을 한 번 더 진하게
+  if (foe) { g.shadowColor = 'rgba(230,20,90,0.95)'; g.shadowBlur = 9; }
+  g.drawImage(t, x0, y0, x1 - x0, y1 - y0, pad, pad, x1 - x0, y1 - y0);
+  c.foot = (y1 - (by + bh)) + pad; // 몸통 발 아래 여백
+  c.cx = (bx + bw / 2) - x0 + pad;   // 몸통 가운데
+  if (foe) g.drawImage(c, 0, 0);
+  c.bw = bw; c.bh = bh;
   return (sprCache[key] = c);
 }
 
 /* ---------- 저장 (이 기기 안에만) ---------- */
 const SAVE = 'spirit-pals-v2';
-function fresh() { return { coins:20, stage:1, grid:Array(N).fill(null), found:{}, merged:0, muted:false }; }
+function fresh() {
+  return { coins:20, stage:1, grid:Array(N).fill(null), found:{}, merged:0, muted:false, cleared:false,
+           quiz:{ digits:'1', ops:'+' } };
+}
 function load() {
   try {
     let s = JSON.parse(localStorage.getItem(SAVE));
@@ -120,17 +176,23 @@ function load() {
     }
     if (s && Array.isArray(s.grid) && s.grid.length === N) {
       s.grid = s.grid.map(u => u && info(u.el) ? { el:u.el, lv:Math.max(1, Math.min(MAXLV, u.lv | 0)) } : null);
-      return Object.assign(fresh(), s);
+      s.stage = Math.max(1, Math.min(MAXSTAGE, s.stage | 0));
+      const f = fresh(); s.quiz = Object.assign(f.quiz, s.quiz || {});
+      return Object.assign(f, s);
     }
   } catch (e) {}
   return fresh();
 }
 function save() { try { localStorage.setItem(SAVE, JSON.stringify(S)); } catch (e) {} }
 let S = load();
-const summonLv = st => Math.min(MAXLV - 2, 1 + Math.floor((st - 1) * 0.5));
+
+/* ---------- 300판 동안의 성장 곡선 ----------
+   부르는 친구 레벨: 1판 Lv1 → 291판부터 Lv97. 같은 친구 둘 = +1 레벨이라 Lv97 넷이면 Lv99. */
+const summonLv = st => Math.min(MAXLV - 2, 1 + Math.floor((Math.min(st, MAXSTAGE) - 1) * (MAXLV - 3) / 290));
 const cost = () => 4 + Math.floor(S.stage * 0.6);
 const winReward = st => 12 + st * 3;
-const loseReward = st => 4 + st;
+const loseReward = st => 3 + Math.floor(st / 2);
+const quizReward = st => 10 + st * 2;
 
 /* ---------- 상대 만들기 (스테이지마다 항상 같은 배치) ---------- */
 function rng(seed) {
@@ -143,14 +205,15 @@ function rng(seed) {
 }
 function genEnemies(st) {
   const R = rng(st * 7919 + 17), sl = summonLv(st);
-  let b = Math.min(24, 2 + Math.floor(st * 0.45));
-  const maxOff = Math.min(5, 1 + Math.floor(st / 5));
+  const boss = st === MAXSTAGE;
+  let b = boss ? 40 : Math.min(26, 2 + Math.floor(st * 0.3));
+  const maxOff = Math.min(4, 1 + Math.floor(st / 8));
   const g = Array(N).fill(null);
   while (b > 0) {
     const off = Math.floor(R() * (Math.min(maxOff, Math.floor(Math.log2(b))) + 1));
     const empty = []; g.forEach((u, i) => { if (!u) empty.push(i); });
     if (!empty.length) break;
-    const front = empty.filter(i => i >= 2 * COLS);
+    const front = empty.filter(i => i % COLS === 0);
     const pool = front.length && R() < 0.6 ? front : empty;
     const i = pool[Math.floor(R() * pool.length)];
     const lv = Math.min(MAXLV, sl + off);
@@ -179,14 +242,15 @@ function beep(f, d = 0.12, type = 'sine', v = 0.12, slide = 0, delay = 0) {
 const tune = (notes, step = 0.09, type = 'triangle') => notes.forEach((f, i) => beep(f, 0.18, type, 0.1, 0, i * step));
 
 /* ---------- 화면 크기 ---------- */
-let scale = 1, ox = 0, oy = 0, dpr = 1;
+let scale = 1, ox = 0, oy = 0, dpr = 1, vw = 0, vh = 0;
 function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-  const w = cv.clientWidth || innerWidth, h = cv.clientHeight || innerHeight;
-  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
-  scale = Math.min(w / W, h / H); ox = (w - W * scale) / 2; oy = (h - H * scale) / 2;
+  vw = cv.clientWidth || innerWidth; vh = cv.clientHeight || innerHeight;
+  cv.width = Math.round(vw * dpr); cv.height = Math.round(vh * dpr);
+  scale = Math.min(vw / W, vh / H); ox = (vw - W * scale) / 2; oy = (vh - H * scale) / 2;
 }
 addEventListener('resize', resize); resize();
+try { screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {}); } catch (e) {}
 
 /* ---------- 효과 ---------- */
 let parts = [], texts = [], rings = [], toastMsg = null, pops = Array(N).fill(0);
@@ -225,36 +289,36 @@ function coinIcon(x, y, r) {
 }
 
 // 캐릭터 그리기: 숨쉬기·통통 튀기·흔들림 애니메이션은 여기서 만듦
-// opt: { s: 크기 배율, alpha, flip, hit, lunge, badge }
+// 크기는 레벨로만 정해지고, 그림마다 들쭉날쭉한 크기는 넓이 기준으로 맞춤
 function drawUnit(x, y, k, lv, foe, opt = {}) {
   const s = opt.s || 1, t = now, ph = x * 0.071 + y * 0.037;
-  const size = (46 + lv * 0.28 + (isHybrid(k) ? 6 : 0)) * s;
+  const size = (38 + lv * 0.25 + (isHybrid(k) ? 5 : 0)) * s;
   const breathe = Math.sin(t * 3.1 + ph) * 0.035;
   const bob = Math.abs(Math.sin(t * 2.2 + ph)) * -2.5 * s;
   const sway = Math.sin(t * 1.7 + ph) * 0.04;
   ctx.save();
   ctx.globalAlpha = opt.alpha == null ? 1 : opt.alpha;
-  // 그림자
-  ctx.fillStyle = 'rgba(40,20,60,0.16)';
-  ctx.beginPath(); ctx.ellipse(x, y + size * 0.42, size * 0.36 * (1 - bob / 30), size * 0.09, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(20,30,10,0.25)';
+  ctx.beginPath(); ctx.ellipse(x, y + size * 0.5, size * 0.42 * (1 + bob / 40), size * 0.1, 0, 0, Math.PI * 2); ctx.fill();
   const img = sprite(k, spriteIndex(k, lv), foe);
-  ctx.translate(x, y + size * 0.45 + bob);
+  ctx.translate(x, y + size * 0.52 + bob);
   ctx.rotate(sway);
   ctx.scale((opt.flip ? -1 : 1) * (1 - breathe * 0.6), 1 + breathe);
   if (img) {
-    const d = size * (img.width / SPR);
-    ctx.drawImage(img, -d / 2, -d + size * (12 / SPR), d, d);
+    const f = Math.min(size / Math.sqrt(img.bw * img.bh), size * 1.35 / Math.max(img.bw, img.bh));
+    const dw = img.width * f, dh = img.height * f;
+    ctx.drawImage(img, -img.cx * f, -dh + img.foot * f, dw, dh);
     if (opt.hit > 0) { // 맞으면 하얗게 번쩍
       ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha *= Math.min(1, opt.hit * 6) * 0.6;
-      ctx.drawImage(img, -d / 2, -d + size * (12 / SPR), d, d);
+      ctx.drawImage(img, -img.cx * f, -dh + img.foot * f, dw, dh);
       ctx.globalCompositeOperation = 'source-over';
     }
   } else {
-    ctx.beginPath(); ctx.arc(0, -size * 0.4, size * 0.35, 0, Math.PI * 2); ctx.fillStyle = info(k).c; ctx.fill();
+    ctx.beginPath(); ctx.arc(0, -size * 0.45, size * 0.4, 0, Math.PI * 2); ctx.fillStyle = info(k).c; ctx.fill();
   }
   ctx.restore();
   if (opt.badge !== false) {
-    const bx = x + size * 0.36, by = y + size * 0.36, w = lv >= 10 ? 22 : 16;
+    const bx = x + CELL * 0.33, by = y + CELL * 0.34, w = lv >= 10 ? 22 : 16;
     rr(bx - w / 2, by - 8, w, 16, 8);
     ctx.fillStyle = foe ? '#ff4d7a' : (isHybrid(k) ? '#ffd23f' : '#fff'); ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = foe ? '#7a1030' : '#3b2b4f'; ctx.stroke();
@@ -264,26 +328,27 @@ function drawUnit(x, y, k, lv, foe, opt = {}) {
 
 /* ---------- 버튼 ---------- */
 let btns = [];
-function button(x, y, w, h, label, color, fn, sub, disabled) {
+function button(x, y, w, h, label, color, fn, sub, disabled, size = 24) {
   ctx.save();
-  rr(x, y + 5, w, h, 18); ctx.fillStyle = 'rgba(60,30,80,0.25)'; ctx.fill();
-  rr(x, y, w, h, 18); ctx.fillStyle = disabled ? '#cfc6d8' : color; ctx.fill();
+  rr(x, y + 5, w, h, 16); ctx.fillStyle = 'rgba(30,20,40,0.35)'; ctx.fill();
+  rr(x, y, w, h, 16); ctx.fillStyle = disabled ? '#cfc6d8' : color; ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(60,30,80,0.35)'; ctx.stroke();
-  if (sub) { outlined(label, x + w / 2, y + h / 2 - 12, 21, '#fff'); sub(x + w / 2, y + h / 2 + 16); }
-  else outlined(label, x + w / 2, y + h / 2, 24, '#fff');
+  if (sub) { outlined(label, x + w / 2, y + h / 2 - 12, size - 3, '#fff'); sub(x + w / 2, y + h / 2 + 16); }
+  else outlined(label, x + w / 2, y + h / 2, size, '#fff');
   ctx.restore();
   btns.push({ x, y, w, h, fn });
 }
 
 /* ---------- 게임 흐름 ---------- */
-let mode = 'merge', B = null, speed = 1, result = null, drag = null, now = 0;
+// mode: merge | battle | result | quiz | settings
+let mode = 'merge', B = null, speed = 1, result = null, drag = null, now = 0, Q = null;
 
 function cellPos(side, i) {
-  const c = i % COLS, r = Math.floor(i / COLS), y0 = side === 'p' ? PY : EY;
-  return { x: GX + c * CELL + CELL / 2, y: y0 + r * CELL + CELL / 2 - 4 };
+  const c = i % COLS, r = Math.floor(i / COLS), x0 = side === 'p' ? PX : EX;
+  return { x: x0 + c * CELL + CELL / 2, y: GY + r * CELL + CELL / 2 };
 }
 function cellAt(x, y) {
-  const c = Math.floor((x - GX) / CELL), r = Math.floor((y - PY) / CELL);
+  const c = Math.floor((x - PX) / CELL), r = Math.floor((y - GY) / CELL);
   if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return -1;
   return r * COLS + c;
 }
@@ -312,7 +377,7 @@ function buy() {
 
 function mkF(side, u, i) {
   const p = cellPos(side, i), s = stats(u.el, u.lv);
-  return Object.assign({ side, el: u.el, lv: u.lv, x: p.x, y: p.y, hp: s.maxhp, cdT: Math.random() * 0.5, lunge: 0, hit: 0, dead: false, deadT: 0, look: side === 'p' ? -Math.PI / 2 : Math.PI / 2 }, s);
+  return Object.assign({ side, el: u.el, lv: u.lv, x: p.x, y: p.y, hp: s.maxhp, cdT: Math.random() * 0.5, lunge: 0, hit: 0, dead: false, deadT: 0, look: side === 'p' ? 0 : Math.PI }, s);
 }
 function startBattle() {
   if (!S.grid.some(Boolean)) { toast('먼저 "친구 부르기"를 눌러요!'); return; }
@@ -325,11 +390,10 @@ function startBattle() {
 }
 function hitF(a, b) {
   if (b.dead) return;
-  const adv = info(a.el).beats.includes(isHybrid(b.el) ? null : b.el) ||
-              (isHybrid(b.el) && HY[b.el].pair.some(p => info(a.el).beats.includes(p)));
+  const adv = beatsTarget(a.el, b.el);
   const dmg = Math.max(1, a.atk * (adv ? 1.6 : 1) * (0.9 + Math.random() * 0.2));
   b.hp -= dmg; b.hit = 0.15;
-  floatText(b.x + (Math.random() - 0.5) * 16, b.y - 26, adv ? '최고! ' + fmt(dmg) : fmt(dmg), adv ? '#ffd23f' : '#fff');
+  floatText(b.x + (Math.random() - 0.5) * 16, b.y - 30, adv ? '최고! ' + fmt(dmg) : fmt(dmg), adv ? '#ffd23f' : '#fff');
   beep(adv ? 700 : 420, 0.06, 'triangle', 0.05);
   if (b.hp <= 0) { b.dead = true; b.deadT = 0; burst(b.x, b.y, info(b.el).c, 14); beep(330, 0.2, 'sine', 0.08, 0.5); }
 }
@@ -346,7 +410,7 @@ function stepBattle(dt) {
     if (bd > f.range) { const k = Math.min(1, f.spd * dt / bd); f.x += (best.x - f.x) * k; f.y += (best.y - f.y) * k; }
     else if (f.cdT <= 0) {
       f.cdT = f.cd; f.lunge = 0.18;
-      if (f.range > 60) { B.proj.push({ x: f.x, y: f.y - 14, t: best, src: f }); beep(900, 0.05, 'sine', 0.03, 0.6); }
+      if (f.range > 60) { B.proj.push({ x: f.x, y: f.y - 12, t: best, src: f }); beep(900, 0.05, 'sine', 0.03, 0.6); }
       else hitF(f, best);
     }
     for (const g of F) {
@@ -354,13 +418,13 @@ function stepBattle(dt) {
       const dx = f.x - g.x, dy = f.y - g.y, d = Math.hypot(dx, dy) || 0.01;
       if (d < 34) { const p = (34 - d) / d * Math.min(1, dt * 6); f.x += dx * p * 0.5; f.y += dy * p * 0.5; }
     }
-    f.x = Math.max(22, Math.min(W - 22, f.x)); f.y = Math.max(EY + 10, Math.min(PY + ROWS * CELL - 10, f.y));
+    f.x = Math.max(PX - 20, Math.min(EX + COLS * CELL + 20, f.x)); f.y = Math.max(GY + 16, Math.min(GY + ROWS * CELL - 16, f.y));
   }
   B.proj = B.proj.filter(p => {
     if (p.t.dead) return false;
-    const dx = p.t.x - p.x, dy = p.t.y - 14 - p.y, d = Math.hypot(dx, dy);
+    const dx = p.t.x - p.x, dy = p.t.y - 12 - p.y, d = Math.hypot(dx, dy);
     if (d < 12) { hitF(p.src, p.t); return false; }
-    const k = Math.min(1, 330 * dt / d); p.x += dx * k; p.y += dy * k; return true;
+    const k = Math.min(1, 340 * dt / d); p.x += dx * k; p.y += dy * k; return true;
   });
   if (!B.over) {
     const pa = F.some(f => !f.dead && f.side === 'p'), ea = F.some(f => !f.dead && f.side === 'e');
@@ -374,16 +438,57 @@ function endBattle(win) {
   const reward = win ? winReward(S.stage) : loseReward(S.stage);
   S.coins += reward;
   const oldSl = summonLv(S.stage);
-  result = { win, reward, stage: S.stage };
+  result = { win, reward, stage: S.stage, quizDone: false };
   if (win) {
-    S.stage++;
+    if (S.stage >= MAXSTAGE) { S.cleared = true; result.final = true; }
+    else S.stage++;
     result.slUp = summonLv(S.stage) > oldSl ? summonLv(S.stage) : 0;
-    tune([523, 659, 784, 1047, 1319], 0.1);
-    for (let i = 0; i < 5; i++) burst(60 + i * 75, 300, info(ELS[i]).c, 14);
+    tune(result.final ? [523, 659, 784, 1047, 1319, 1568, 2093] : [523, 659, 784, 1047, 1319], 0.1);
+    for (let i = 0; i < 5; i++) burst(260 + i * 110, 200, info(ELS[i]).c, result.final ? 30 : 14);
   } else tune([440, 392, 349], 0.15, 'sine');
   save(); mode = 'result';
 }
 function closeResult() { mode = 'merge'; B = null; result = null; enemy = genEnemies(S.stage); beep(660, 0.08); }
+
+/* ---------- 수학 문제 (지면 코인을 더 받을 기회) ---------- */
+const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+function makeProblem() {
+  const d = S.quiz.digits, ops = S.quiz.ops;
+  const op = ops === '+-' ? (Math.random() < 0.5 ? '+' : '-') : ops;
+  let a, b;
+  if (d === '1') { a = rnd(1, 9); b = rnd(1, 9); }
+  else if (d === '2') { a = rnd(10, 99); b = rnd(10, 99); }
+  else { a = rnd(1, 9); b = rnd(10, 99); if (Math.random() < 0.5) [a, b] = [b, a]; }
+  if (op === '-' && a < b) [a, b] = [b, a]; // 답이 0보다 작지 않게
+  return { a, b, op, ans: op === '+' ? a + b : a - b };
+}
+function openQuiz() { Q = Object.assign(makeProblem(), { input: '', tries: 0, state: 'ask', t: 0 }); mode = 'quiz'; beep(660, 0.08); }
+function quizKey(k) {
+  if (!Q || Q.state !== 'ask') return;
+  if (k === '←') { Q.input = Q.input.slice(0, -1); beep(400, 0.04); return; }
+  if (k === '확인') {
+    if (!Q.input) return;
+    if (Number(Q.input) === Q.ans) {
+      const bonus = quizReward(result.stage);
+      S.coins += bonus; save();
+      Q.state = 'right'; Q.bonus = bonus; Q.t = 0;
+      tune([659, 784, 1047, 1319], 0.08);
+      burst(480, 200, '#ffd23f', 24); burst(480, 200, '#5fc95f', 16);
+    } else {
+      Q.tries++; Q.t = 0; Q.shake = 0.4; beep(200, 0.2, 'square', 0.06);
+      if (Q.tries >= 3) Q.state = 'reveal'; else Q.input = '';
+    }
+    return;
+  }
+  if (Q.input.length < 3) { Q.input += k; beep(520 + Number(k) * 30, 0.05, 'triangle', 0.07); }
+}
+function closeQuiz() { result.quizDone = true; Q = null; mode = 'result'; }
+addEventListener('keydown', e => {
+  if (mode !== 'quiz') return;
+  if (/^[0-9]$/.test(e.key)) quizKey(e.key);
+  else if (e.key === 'Backspace') quizKey('←');
+  else if (e.key === 'Enter') { if (Q && Q.state === 'ask') quizKey('확인'); else closeQuiz(); }
+});
 
 /* ---------- 입력 ---------- */
 function toLogical(e) { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left - ox) / scale, y: (e.clientY - r.top - oy) / scale }; }
@@ -421,16 +526,16 @@ cv.addEventListener('pointerup', () => {
   if (!b) { S.grid[j] = a; S.grid[d.i] = null; pops[j] = 0.5; beep(500, 0.05); }
   else if (m) {
     const hybridNew = m.el !== a.el;
-    const evolved = spriteIndex(m.el, m.lv) !== spriteIndex(a.el, a.lv) || hybridNew;
     S.grid[j] = m; S.grid[d.i] = null; pops[j] = 1; S.merged++;
     const p = cellPos('p', j);
     burst(p.x, p.y, info(a.el).c, 16); burst(p.x, p.y, info(b.el).c, hybridNew ? 16 : 0); burst(p.x, p.y, '#fff7b0', 8);
     rings.push({ x: p.x, y: p.y, t: 0, color: info(m.el).c });
     if (hybridNew) { rings.push({ x: p.x, y: p.y, t: -0.15, color: '#ffd23f' }); tune([523, 659, 784, 1047, 1319, 1568], 0.07); }
     else { const f = Math.pow(1.012, m.lv); tune([523 * f, 659 * f, 784 * f], 0.06); }
-    const fresh = discover(m);
+    const isNew = discover(m);
     if (hybridNew) toast('혼합 진화! ' + unitName(m) + ' Lv.' + m.lv, 2.4);
-    else if (evolved && fresh) toast('진화! ' + unitName(m) + ' Lv.' + m.lv, 1.8);
+    else if (m.lv === MAXLV) toast('최고 레벨 달성! ' + unitName(m) + ' Lv.99', 2.4);
+    else if (isNew) toast('진화! ' + unitName(m) + ' Lv.' + m.lv, 1.6);
   } else if (b.el === a.el && b.lv === a.lv) { toast('이미 최고 레벨이에요!'); }
   else { S.grid[j] = a; S.grid[d.i] = b; pops[j] = 0.4; pops[d.i] = 0.4; beep(450, 0.05); }
   save();
@@ -439,60 +544,91 @@ cv.addEventListener('pointercancel', () => { drag = null; });
 
 function resetAll() {
   if (confirm('처음부터 다시 할까요? 모은 친구와 코인이 모두 사라져요.')) {
-    const m = S.muted; S = fresh(); S.muted = m; save(); enemy = genEnemies(1); toast('새로 시작해요!');
+    const m = S.muted, q = S.quiz; S = fresh(); S.muted = m; S.quiz = q; save(); enemy = genEnemies(1); mode = 'merge'; toast('새로 시작해요!');
   }
 }
 function toggleMute() { S.muted = !S.muted; save(); beep(660, 0.08); }
 
 /* ---------- 화면 그리기 ---------- */
+function drawBackground() {
+  // 배경 그림은 화면 전체를 덮도록 (잘리는 부분은 가장자리)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (BG.complete && BG.naturalWidth) {
+    const k = Math.max(vw / BG.naturalWidth, vh / BG.naturalHeight);
+    const w = BG.naturalWidth * k, h = BG.naturalHeight * k;
+    ctx.drawImage(BG, (vw - w) / 2, (vh - h) / 2, w, h);
+  } else {
+    const g = ctx.createRadialGradient(vw / 2, vh * 0.55, 10, vw / 2, vh * 0.55, Math.max(vw, vh) * 0.7);
+    g.addColorStop(0, '#8db547'); g.addColorStop(0.6, '#5e8c2e'); g.addColorStop(1, '#3d6420');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, vw, vh);
+    ctx.fillStyle = 'rgba(40,70,20,0.55)';
+    for (let i = 0; i < 9; i++) { ctx.beginPath(); ctx.arc((i + 0.5) * vw / 9, -vh * 0.02, vw / 11, 0, Math.PI * 2); ctx.fill(); }
+  }
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
+}
+
 function drawBoard() {
-  const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#bfe4ff'); g.addColorStop(0.45, '#fff4dd'); g.addColorStop(1, '#d9f3c6');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  rr(GX - 8, EY - 4, COLS * CELL + 16, ROWS * CELL + 12, 22); ctx.fillStyle = 'rgba(150,110,200,0.16)'; ctx.fill();
-  rr(GX - 8, PY - 4, COLS * CELL + 16, ROWS * CELL + 12, 22); ctx.fillStyle = 'rgba(100,190,100,0.2)'; ctx.fill();
+  rr(PX - 8, GY - 8, COLS * CELL + 16, ROWS * CELL + 16, 20); ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fill();
+  rr(EX - 8, GY - 8, COLS * CELL + 16, ROWS * CELL + 16, 20); ctx.fillStyle = 'rgba(120,40,120,0.22)'; ctx.fill();
   const showCells = mode !== 'battle';
   const dragU = drag && S.grid[drag.i];
   for (let i = 0; i < N; i++) {
     const c = i % COLS, r = Math.floor(i / COLS);
-    if (showCells) { rr(GX + c * CELL + 4, EY + r * CELL + 4, CELL - 8, CELL - 8, 14); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fill(); }
-    rr(GX + c * CELL + 4, PY + r * CELL + 4, CELL - 8, CELL - 8, 14);
+    if (showCells) { rr(EX + c * CELL + 4, GY + r * CELL + 4, CELL - 8, CELL - 8, 12); ctx.fillStyle = 'rgba(255,230,255,0.22)'; ctx.fill(); }
+    rr(PX + c * CELL + 4, GY + r * CELL + 4, CELL - 8, CELL - 8, 12);
     let hl = null;
     if (dragU && i !== drag.i) { const m = mergeResult(dragU, S.grid[i]); if (m) hl = m.el !== dragU.el ? 'hy' : 'same'; }
-    ctx.fillStyle = hl === 'hy' ? 'rgba(190,150,255,0.8)' : hl ? 'rgba(255,230,90,0.75)' : showCells ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.25)'; ctx.fill();
+    ctx.fillStyle = hl === 'hy' ? 'rgba(190,150,255,0.85)' : hl ? 'rgba(255,230,90,0.8)' : showCells ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.15)'; ctx.fill();
     if (hl) { ctx.lineWidth = 3; ctx.strokeStyle = hl === 'hy' ? '#7b4dff' : '#f0a500'; ctx.stroke(); }
   }
-  text('말썽 정령들', W / 2, EY - 13, 12, '#6b4a8f');
+  outlined('내 친구들', PX + COLS * CELL / 2, GY - 12, 12, '#fff', '#2d4a14');
+  outlined('말썽 정령들', EX + COLS * CELL / 2, GY - 12, 12, '#ffd0e0', '#5a1030');
 }
 
 function drawMiddle() {
   if (mode === 'battle') return;
-  const my = (EY + ROWS * CELL + PY) / 2 - 6;
+  const cx = (PX + COLS * CELL + EX) / 2;
+  outlined('VS', cx, 120, 40, '#fff', '#3b2b4f');
   // 상성표: 물 ▶ 불 ▶ 바람 ▶ 땅 ▶ 전기 ▶ 물
+  rr(cx - 136, 170, 272, 150, 18); ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
   const order = ['water', 'fire', 'wind', 'earth', 'electric', 'water'];
-  const pick = { water: 30, fire: 12, wind: 44, earth: 12, electric: 16 }; // 원소가 잘 보이는 모습
+  const pick = { water: 5, fire: 5, wind: 5, earth: 5, electric: 5 };
   order.forEach((el, k) => {
-    const x = 38 + k * 69;
-    drawUnit(x, my - 10, el, pick[el], false, { s: 0.62, badge: false });
-    if (k < 5) outlined('▶', x + 35, my - 4, 14, '#ffd23f', '#a06a00');
+    const x = cx - 115 + k * 46;
+    drawUnit(x, 220, el, pick[el], false, { s: 0.6, badge: false });
+    text(EL[el].label, x, 252, 11, '#3b2b4f');
+    if (k < 5) outlined('▶', x + 23, 222, 12, '#ffd23f', '#a06a00');
   });
-  text('▶ 쪽을 이겨요 · 바람과 전기는 멀리서 쏴요 · Lv' + HYBRID_LV + '부터 혼합!', W / 2, my + 26, 11.5, '#6b4a8f');
+  text('▶ 쪽을 이겨요', cx, 276, 12, '#6b4a8f');
+  text('바람·전기는 멀리서 쏴요 · Lv' + HYBRID_LV + '부터 혼합!', cx, 298, 11.5, '#6b4a8f');
 }
 
 function drawTop() {
-  rr(10, 10, W - 20, 50, 18); ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fill();
-  outlined('스테이지 ' + S.stage, 82, 35, 20, '#ff8a4c', '#7a3510');
-  coinIcon(190, 35, 12); outlined(fmt(S.coins), 240, 35, 21, '#ffd23f', '#8a5a00');
-  const mx = W - 58, my = 16;
-  rr(mx, my, 40, 38, 12); ctx.fillStyle = S.muted ? '#cfc6d8' : '#8fd3ff'; ctx.fill();
+  rr(10, 8, W - 20, 44, 16); ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
+  outlined(S.stage >= MAXSTAGE ? '최종 스테이지 ' + S.stage : '스테이지 ' + S.stage + ' / ' + MAXSTAGE, 140, 30, 19, '#ff8a4c', '#7a3510');
+  rr(260, 22, 200, 14, 7); ctx.fillStyle = 'rgba(60,40,80,0.2)'; ctx.fill();
+  rr(260, 22, 200 * Math.min(1, S.stage / MAXSTAGE), 14, 7); ctx.fillStyle = '#ffb02e'; ctx.fill();
+  coinIcon(510, 30, 11); outlined(fmt(S.coins), 560, 30, 20, '#ffd23f', '#8a5a00');
+  text('부르기 Lv.' + summonLv(S.stage), 680, 30, 14, '#7a3510');
+  // 설정(톱니) 버튼: 수학 문제 난이도
+  const gx = W - 104, gy = 13;
+  rr(gx, gy, 40, 34, 10); ctx.fillStyle = '#ffd98a'; ctx.fill();
+  ctx.save(); ctx.translate(gx + 20, gy + 17); ctx.fillStyle = '#3b2b4f';
+  for (let i = 0; i < 8; i++) { ctx.rotate(Math.PI / 4); ctx.fillRect(-2.5, -12, 5, 6); }
+  ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffd98a'; ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  if (mode === 'merge') btns.push({ x: gx, y: gy, w: 40, h: 34, fn: () => { mode = 'settings'; beep(660, 0.06); } });
+  // 소리 버튼
+  const mx = W - 56, my = 13;
+  rr(mx, my, 40, 34, 10); ctx.fillStyle = S.muted ? '#cfc6d8' : '#8fd3ff'; ctx.fill();
   ctx.fillStyle = '#3b2b4f'; ctx.beginPath();
-  ctx.moveTo(mx + 9, my + 15); ctx.lineTo(mx + 15, my + 15); ctx.lineTo(mx + 22, my + 9); ctx.lineTo(mx + 22, my + 29);
-  ctx.lineTo(mx + 15, my + 23); ctx.lineTo(mx + 9, my + 23); ctx.closePath(); ctx.fill();
+  ctx.moveTo(mx + 9, my + 13); ctx.lineTo(mx + 15, my + 13); ctx.lineTo(mx + 22, my + 7); ctx.lineTo(mx + 22, my + 27);
+  ctx.lineTo(mx + 15, my + 21); ctx.lineTo(mx + 9, my + 21); ctx.closePath(); ctx.fill();
   ctx.strokeStyle = '#3b2b4f'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.beginPath();
-  if (S.muted) { ctx.moveTo(mx + 26, my + 14); ctx.lineTo(mx + 34, my + 24); ctx.moveTo(mx + 34, my + 14); ctx.lineTo(mx + 26, my + 24); }
-  else { ctx.arc(mx + 23, my + 19, 7, -0.9, 0.9); ctx.moveTo(mx + 23 + 11 * Math.cos(-0.9), my + 19 + 11 * Math.sin(-0.9)); ctx.arc(mx + 23, my + 19, 11, -0.9, 0.9); }
+  if (S.muted) { ctx.moveTo(mx + 26, my + 12); ctx.lineTo(mx + 34, my + 22); ctx.moveTo(mx + 34, my + 12); ctx.lineTo(mx + 26, my + 22); }
+  else { ctx.arc(mx + 23, my + 17, 6, -0.9, 0.9); ctx.moveTo(mx + 23 + 10 * Math.cos(-0.9), my + 17 + 10 * Math.sin(-0.9)); ctx.arc(mx + 23, my + 17, 10, -0.9, 0.9); }
   ctx.stroke();
-  btns.push({ x: mx, y: my, w: 40, h: 38, fn: toggleMute });
+  btns.push({ x: mx, y: my, w: 40, h: 34, fn: toggleMute });
 }
 
 function drawMergeUnits() {
@@ -514,8 +650,8 @@ function drawBattle() {
     drawUnit(f.x + Math.cos(f.look) * lz + sh, f.y + Math.sin(f.look) * lz, f.el, f.lv, f.side === 'e',
       { s: f.dead ? 1 - f.deadT : 1, alpha: f.dead ? 1 - f.deadT / 0.4 : 1, flip: Math.cos(f.look) < 0, hit: f.hit, badge: false });
     if (!f.dead) {
-      const w = 34, y = f.y - 44;
-      rr(f.x - w / 2, y, w, 6, 3); ctx.fillStyle = 'rgba(40,20,60,0.4)'; ctx.fill();
+      const w = 34, y = f.y - 38;
+      rr(f.x - w / 2, y, w, 6, 3); ctx.fillStyle = 'rgba(20,10,30,0.5)'; ctx.fill();
       rr(f.x - w / 2, y, w * Math.max(0, f.hp / f.maxhp), 6, 3); ctx.fillStyle = f.side === 'p' ? '#5fd35f' : '#ff6b6b'; ctx.fill();
     }
   }
@@ -530,42 +666,105 @@ function drawBattle() {
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, 4, now * 12, now * 12 + 4); ctx.stroke();
     }
   }
-  if (B.over) outlined(B.over === 'win' ? '이겼다!' : '앗...', W / 2, 360, 44, B.over === 'win' ? '#ffd23f' : '#cfd8ff');
+  if (B.over) outlined(B.over === 'win' ? '이겼다!' : '앗...', W / 2, 250, 52, B.over === 'win' ? '#ffd23f' : '#cfd8ff');
 }
 
 function drawBottom() {
+  const cx = (PX + COLS * CELL + EX) / 2;
   if (mode === 'battle') {
-    button(GX, 654, COLS * CELL, 78, speed === 1 ? '빠르게 보기 ▶▶' : '천천히 보기 ▶', '#8fb8ff', () => { speed = speed === 1 ? 2.5 : 1; beep(700, 0.05); });
+    button(cx - 120, 452, 240, 70, speed === 1 ? '빠르게 보기 ▶▶' : '천천히 보기 ▶', '#8fb8ff', () => { speed = speed === 1 ? 2.5 : 1; beep(700, 0.05); });
     return;
   }
   const c = cost(), full = !S.grid.includes(null);
-  if (S.merged === 0 && S.grid.filter(Boolean).length >= 2) text('같은 친구 둘을 끌어다 겹치면 합체해요!', W / 2, 642, 14, '#c94a1a');
-  else if (S.grid.some(u => u && !isHybrid(u.el) && u.lv >= HYBRID_LV)) text('Lv' + HYBRID_LV + '+ 다른 원소끼리 겹치면 혼합 진화!', W / 2, 642, 13, '#7b4dff');
-  button(GX, 654, 182, 78, '친구 부르기', '#ffa24c', buy, (x, y) => {
-    coinIcon(x - 40, y, 9); outlined(fmt(c), x - 16, y, 16, '#fff');
-    outlined('Lv.' + summonLv(S.stage), x + 36, y, 15, '#fff6c0', '#7a3510');
+  button(PX - 6, 448, COLS * CELL + 12, 76, '친구 부르기', '#ffa24c', buy, (x, y) => {
+    coinIcon(x - 44, y, 9); outlined(fmt(c), x - 18, y, 16, '#fff');
+    outlined('Lv.' + summonLv(S.stage), x + 40, y, 15, '#fff6c0', '#7a3510');
   }, S.coins < c || full);
-  button(GX + COLS * CELL - 182, 654, 182, 78, '싸우자!', '#ff6b8a', startBattle, null, !S.grid.some(Boolean));
-  text('처음부터 다시', W / 2, 760, 12, 'rgba(90,70,110,0.55)', 'center', 'normal');
-  btns.push({ x: W / 2 - 50, y: 748, w: 100, h: 26, fn: resetAll });
+  button(EX - 6, 448, COLS * CELL + 12, 76, S.cleared ? '다시 도전!' : '싸우자!', '#ff6b8a', startBattle, null, !S.grid.some(Boolean), 26);
+  if (S.merged === 0 && S.grid.filter(Boolean).length >= 2) outlined('같은 친구 둘을 끌어다 겹치면 합체!', cx, 350, 14, '#fff', '#7a3510');
+  else if (S.grid.some(u => u && !isHybrid(u.el) && u.lv >= HYBRID_LV)) outlined('Lv' + HYBRID_LV + '+ 다른 원소끼리 겹치면 혼합 진화!', cx, 350, 13, '#efe6ff', '#4a2a8a');
+  if (S.cleared) outlined('★ 300판 모두 클리어! ★', cx, 384, 17, '#ffd23f', '#7a3510');
+  text('처음부터 다시', cx, 505, 12, 'rgba(255,255,255,0.8)', 'center', 'normal');
+  btns.push({ x: cx - 55, y: 492, w: 110, h: 26, fn: resetAll });
+}
+
+function panel(x, y, w, h, border) {
+  ctx.fillStyle = 'rgba(20,10,30,0.5)'; ctx.fillRect(0, 0, W, H);
+  rr(x, y, w, h, 26); ctx.fillStyle = '#fffaf0'; ctx.fill();
+  ctx.lineWidth = 5; ctx.strokeStyle = border; ctx.stroke();
 }
 
 function drawResult() {
-  ctx.fillStyle = 'rgba(40,20,60,0.45)'; ctx.fillRect(0, 0, W, H);
-  rr(40, 220, W - 80, 310, 28); ctx.fillStyle = '#fffaf0'; ctx.fill();
-  ctx.lineWidth = 5; ctx.strokeStyle = result.win ? '#ffb02e' : '#a7b4e0'; ctx.stroke();
-  if (result.win) {
-    outlined('승리!', W / 2, 280, 48, '#ffd23f', '#a05a00');
-    text('스테이지 ' + result.stage + ' 통과!', W / 2, 326, 20, '#5a3d7a');
-    if (result.slUp) text('이제 Lv.' + result.slUp + ' 친구를 부를 수 있어요!', W / 2, 356, 16, '#c94a1a');
-  } else {
-    outlined('아쉬워요!', W / 2, 280, 42, '#a7c4ff', '#3a4a8a');
-    text('합체해서 더 강해진 다음', W / 2, 326, 18, '#5a3d7a');
-    text('다시 도전해 봐요!', W / 2, 352, 18, '#5a3d7a');
-  }
-  coinIcon(W / 2 - 34, 392, 13); outlined('+' + fmt(result.reward), W / 2 + 14, 392, 26, '#ffd23f', '#8a5a00');
   btns = [];
-  button(90, 430, W - 180, 66, result.win ? '다음 스테이지' : '다시 준비하기', result.win ? '#5fc95f' : '#8fb8ff', closeResult);
+  panel(250, 90, 460, 370, result.win ? '#ffb02e' : '#a7b4e0');
+  if (result.final) {
+    outlined('축하해요!', W / 2, 150, 48, '#ffd23f', '#a05a00');
+    text('300 스테이지를 모두 클리어했어요!', W / 2, 200, 20, '#5a3d7a');
+    text('Lv.99 친구들과 계속 놀 수 있어요', W / 2, 232, 16, '#c94a1a');
+  } else if (result.win) {
+    outlined('승리!', W / 2, 150, 48, '#ffd23f', '#a05a00');
+    text('스테이지 ' + result.stage + ' 통과!', W / 2, 200, 20, '#5a3d7a');
+    if (result.slUp) text('이제 Lv.' + result.slUp + ' 친구를 부를 수 있어요!', W / 2, 232, 16, '#c94a1a');
+  } else {
+    outlined('아쉬워요!', W / 2, 150, 44, '#a7c4ff', '#3a4a8a');
+    text('합체해서 더 강해진 다음 다시 도전해요!', W / 2, 200, 17, '#5a3d7a');
+  }
+  coinIcon(W / 2 - 36, 272, 13); outlined('+' + fmt(result.reward), W / 2 + 12, 272, 26, '#ffd23f', '#8a5a00');
+  if (!result.win && !result.quizDone) {
+    button(300, 310, 360, 62, '문제 풀고 코인 더 받기', '#9b6bff', openQuiz, (x, y) => {
+      coinIcon(x - 22, y, 8); outlined('+' + fmt(quizReward(result.stage)), x + 12, y, 15, '#fff6c0', '#4a2a8a');
+    }, false, 22);
+    button(380, 386, 200, 52, '그냥 받기', '#8fb8ff', closeResult, null, false, 20);
+  } else {
+    button(330, 340, 300, 64, result.win ? (result.final ? '계속 놀기' : '다음 스테이지') : '다시 준비하기', result.win ? '#5fc95f' : '#8fb8ff', closeResult);
+  }
+}
+
+function drawQuiz(dt) {
+  btns = [];
+  panel(250, 40, 460, 470, '#9b6bff');
+  Q.t += dt; if (Q.shake) Q.shake = Math.max(0, Q.shake - dt);
+  const sh = Q.shake ? Math.sin(Q.t * 60) * 8 * Q.shake / 0.4 : 0;
+  outlined(Q.a + ' ' + (Q.op === '+' ? '+' : '−') + ' ' + Q.b + ' = ?', W / 2 + sh, 92, 40, '#fff', '#4a2a8a');
+  // 답 칸
+  rr(W / 2 - 90, 122, 180, 52, 14); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#9b6bff'; ctx.stroke();
+  const caret = Q.state === 'ask' && Math.floor(now * 2) % 2 === 0 ? '|' : '';
+  text(Q.state === 'reveal' ? String(Q.ans) : (Q.input || '') + caret, W / 2, 149, 32, Q.state === 'reveal' ? '#c94a1a' : '#3b2b4f');
+  if (Q.state === 'ask') {
+    if (Q.tries) text('다시 해 볼까요? (' + (3 - Q.tries) + '번 남음)', W / 2, 188, 14, '#c94a1a');
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '←', '0', '확인'];
+    keys.forEach((k, i) => {
+      const c = i % 3, r = Math.floor(i / 3), x = W / 2 - 138 + c * 94, y = 204 + r * 66;
+      const col = k === '확인' ? '#5fc95f' : k === '←' ? '#ffa24c' : '#7fb2ff';
+      button(x, y, 88, 58, k, col, () => quizKey(k), null, false, k === '확인' ? 22 : 28);
+    });
+  } else if (Q.state === 'right') {
+    outlined('정답이에요!', W / 2, 240, 40, '#5fc95f', '#1f5a1f');
+    coinIcon(W / 2 - 36, 300, 14); outlined('+' + fmt(Q.bonus), W / 2 + 12, 300, 28, '#ffd23f', '#8a5a00');
+    button(340, 380, 280, 64, '좋아요!', '#5fc95f', closeQuiz);
+  } else {
+    text('정답은 ' + Q.ans + ' 이에요.', W / 2, 230, 22, '#5a3d7a');
+    text('다음에 또 도전해 봐요!', W / 2, 266, 18, '#5a3d7a');
+    button(340, 380, 280, 64, '알겠어요', '#8fb8ff', closeQuiz);
+  }
+}
+
+function drawSettings() {
+  btns = [];
+  panel(230, 70, 500, 400, '#ffb02e');
+  outlined('수학 문제 설정', W / 2, 115, 28, '#ffd98a', '#7a3510');
+  text('(어른용) 지면 나오는 문제의 난이도를 골라요', W / 2, 150, 14, '#5a3d7a');
+  const row = (y, label, opts, cur, set) => {
+    text(label, 300, y + 26, 17, '#3b2b4f');
+    opts.forEach(([v, name], i) => {
+      button(370 + i * 112, y, 104, 52, name, cur === v ? '#ff8a4c' : '#cfc6d8', () => { set(v); save(); beep(700, 0.05); }, null, false, 18);
+    });
+  };
+  row(180, '자릿수', [['1', '한 자리'], ['2', '두 자리'], ['mix', '섞어서']], S.quiz.digits, v => S.quiz.digits = v);
+  row(256, '계산', [['+', '더하기'], ['-', '빼기'], ['+-', '둘 다']], S.quiz.ops, v => S.quiz.ops = v);
+  const ex = (() => { const d = S.quiz.digits; return d === '1' ? '3 + 5' : d === '2' ? '23 + 14' : '3 + 14'; })();
+  text('예: ' + (S.quiz.ops === '-' ? ex.replace('+', '−') : ex) + ' = ?', W / 2, 340, 16, '#6b4a8f');
+  button(355, 380, 250, 60, '닫기', '#5fc95f', () => { mode = 'merge'; beep(660, 0.06); });
 }
 
 function drawFx(dt) {
@@ -591,14 +790,22 @@ function drawFx(dt) {
     if (toastMsg.t > toastMsg.dur) toastMsg = null;
     else {
       const a = Math.min(1, toastMsg.t * 6, (toastMsg.dur - toastMsg.t) * 4);
-      ctx.globalAlpha = a; ctx.font = 'bold 15px ' + FONT;
-      const w = Math.min(W - 16, ctx.measureText(toastMsg.txt).width + 30);
-      rr(W / 2 - w / 2, 340, w, 40, 20); ctx.fillStyle = 'rgba(59,43,79,0.92)'; ctx.fill();
-      ctx.save(); ctx.beginPath(); ctx.rect(W / 2 - w / 2 + 8, 340, w - 16, 40); ctx.clip();
-      text(toastMsg.txt, W / 2, 361, 15, '#fff'); ctx.restore();
+      ctx.globalAlpha = a; ctx.font = 'bold 16px ' + FONT;
+      const w = Math.min(W - 40, ctx.measureText(toastMsg.txt).width + 34);
+      rr(W / 2 - w / 2, 400, w, 40, 20); ctx.fillStyle = 'rgba(40,30,60,0.92)'; ctx.fill();
+      text(toastMsg.txt, W / 2, 421, 16, '#fff');
       ctx.globalAlpha = 1;
     }
   }
+}
+
+function drawRotateHint() {
+  if (vh <= vw * 1.05) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = 'rgba(20,10,30,0.82)'; ctx.fillRect(0, 0, vw, vh);
+  ctx.save(); ctx.translate(vw / 2, vh / 2 - 40); ctx.rotate(Math.sin(now * 2) * 0.4 - 0.4);
+  rr(-30, -50, 60, 100, 10); ctx.lineWidth = 5; ctx.strokeStyle = '#fff'; ctx.stroke(); ctx.restore();
+  text('휴대폰을 가로로 돌려 주세요', vw / 2, vh / 2 + 50, 20, '#fff');
 }
 
 let last = performance.now();
@@ -609,8 +816,8 @@ function frame(t) {
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cv.width, cv.height);
-  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
   ctx.imageSmoothingQuality = 'high';
+  drawBackground();
   btns = [];
   drawBoard();
   drawMiddle();
@@ -618,7 +825,10 @@ function frame(t) {
   drawTop();
   drawBottom();
   if (mode === 'result') drawResult();
+  if (mode === 'quiz') drawQuiz(dt);
+  if (mode === 'settings') drawSettings();
   drawFx(dt);
+  drawRotateHint();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

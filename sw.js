@@ -1,13 +1,16 @@
-// 게임 파일을 기기에 저장해 두고, 인터넷이 없어도 실행되게 합니다.
-// 게임을 고친 뒤에는 VERSION 숫자를 올려야 기기에 새 버전이 들어갑니다.
-const VERSION = 'spirit-pals-5';
+﻿// 게임 파일을 기기에 저장해 두고, 인터넷이 없어도 실행되게 합니다.
+// 그림 파일을 바꾼 뒤에는 VERSION 숫자를 올려야 기기에 새 그림이 들어갑니다.
+const VERSION = 'spirit-pals-6';
 const SHEETS = ['fire', 'water', 'wind', 'earth', 'electric', 'wind_electric', 'water_electric', 'earth_water', 'earth_fire'];
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png']
   .concat(SHEETS.map(s => './assets/' + s + '.webp'));
+// 배경 그림은 있을 때만 저장 (없어도 설치가 실패하지 않게)
+const OPTIONAL = ['./assets/background.webp'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION)
-    .then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))
+    .then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))
+      .then(() => Promise.all(OPTIONAL.map(f => c.add(new Request(f, { cache: 'reload' })).catch(() => {})))))
     .then(() => self.skipWaiting()));
 });
 
