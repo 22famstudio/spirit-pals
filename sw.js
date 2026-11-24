@@ -1,12 +1,14 @@
 // 게임 파일을 기기에 저장해 두고, 인터넷이 없어도 실행되게 합니다.
 // 게임을 고친 뒤에는 VERSION 숫자를 올려야 기기에 새 버전이 들어갑니다.
-const VERSION = 'spirit-pals-4';
+const VERSION = 'spirit-pals-5';
 const SHEETS = ['fire', 'water', 'wind', 'earth', 'electric', 'wind_electric', 'water_electric', 'earth_water', 'earth_fire'];
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png']
   .concat(SHEETS.map(s => './assets/' + s + '.webp'));
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION)
+    .then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -23,7 +25,7 @@ self.addEventListener('fetch', e => {
   if (page) {
     // 게임 화면: 인터넷이 되면 새 버전을 받고, 안 되면 저장해 둔 것으로 실행
     e.respondWith(
-      fetch(e.request).then(res => {
+      fetch(e.request, { cache: 'no-cache' }).then(res => {
         const copy = res.clone();
         caches.open(VERSION).then(c => c.put(e.request, copy));
         return res;
