@@ -585,7 +585,11 @@ function quizKey(k) {
 function closeQuiz() { result.quizDone = true; Q = null; mode = 'result'; }
 addEventListener('keydown', e => {
   audioInit();
-  if (mode !== 'quiz') return;
+  if (modal === 'pin') {
+    if (/^[0-9]$/.test(e.key)) pinKey(e.key); else if (e.key === 'Backspace') pinKey('←'); else if (e.key === 'Escape') pinKey('취소');
+    return;
+  }
+  if (mode !== 'quiz' || modal) return;
   if (/^[0-9]$/.test(e.key)) quizKey(e.key);
   else if (e.key === 'Backspace') quizKey('←');
   else if (e.key === 'Enter') { if (Q && Q.state === 'ask') quizKey('확인'); else closeQuiz(); }
@@ -601,7 +605,7 @@ cv.addEventListener('pointerdown', e => {
     const b = btns[k];
     if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) { b.fn(); return; }
   }
-  if (mode !== 'merge') return;
+  if (mode !== 'merge' || modal || screen !== 'game') return;
   const i = cellAt(p.x, p.y);
   if (i >= 0 && S.grid[i]) { drag = { i, x: p.x, y: p.y, sx: p.x, sy: p.y }; cv.setPointerCapture(e.pointerId); sfx('tap', { vol: 0.6 }); }
 });
@@ -712,7 +716,7 @@ function drawPicker() {
 function drawMiddle() {
   if (mode === 'battle') return;
   const cx = (PX + COLS * CELL + EX) / 2;
-  outlined('VS', cx, 120, 40, '#fff', '#3b2b4f');
+  outlined('VS', cx, 136, 38, '#fff', '#3b2b4f');
   // 상성표: 물 ▶ 불 ▶ 바람 ▶ 땅 ▶ 전기 ▶ 물
   rr(cx - 136, 170, 272, 150, 18); ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
   const order = ['water', 'fire', 'wind', 'earth', 'electric', 'water'];
@@ -741,7 +745,7 @@ function drawTop() {
   for (let i = 0; i < 8; i++) { ctx.rotate(Math.PI / 4); ctx.fillRect(-2.5, -12, 5, 6); }
   ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#ffd98a'; ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-  if (mode === 'merge') btns.push({ x: gx, y: gy, w: 40, h: 34, fn: () => { mode = 'settings'; sfx('tap'); } });
+  if (mode === 'merge') btns.push({ x: gx, y: gy, w: 40, h: 34, fn: openParent });
   // 음악 버튼 (♪)
   const nx = W - 152, ny = 13;
   rr(nx, ny, 40, 34, 10); ctx.fillStyle = S.musicOff ? '#cfc6d8' : '#b9f0a8'; ctx.fill();
@@ -821,12 +825,12 @@ function drawBottom() {
   if (S.merged === 0 && S.grid.filter(Boolean).length >= 2) outlined('같은 원소 친구끼리 겹치면 합체!', cx, 350, 14, '#fff', '#7a3510');
   else if (S.grid.some(u => u && !isHybrid(u.el) && u.lv >= HYBRID_LV)) outlined('Lv' + HYBRID_LV + '+ 다른 원소끼리 겹치면 혼합 진화!', cx, 350, 13, '#efe6ff', '#4a2a8a');
   if (S.cleared) outlined('★ 300판 모두 클리어! ★', cx, 384, 17, '#ffd23f', '#7a3510');
-  text('처음부터 다시', cx, 505, 12, 'rgba(255,255,255,0.8)', 'center', 'normal');
-  btns.push({ x: cx - 55, y: 492, w: 110, h: 26, fn: resetAll });
 }
 
+// 화면 전체(가장자리 포함)를 어둡게
+function dimAll(color) { ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = color; ctx.fillRect(0, 0, vw, vh); ctx.restore(); }
 function panel(x, y, w, h, border) {
-  ctx.fillStyle = 'rgba(20,10,30,0.5)'; ctx.fillRect(0, 0, W, H);
+  dimAll('rgba(20,10,30,0.5)');
   rr(x, y, w, h, 26); ctx.fillStyle = '#fffaf0'; ctx.fill();
   ctx.lineWidth = 5; ctx.strokeStyle = border; ctx.stroke();
 }
@@ -888,20 +892,28 @@ function drawQuiz(dt) {
 
 function drawSettings() {
   btns = [];
-  panel(230, 70, 500, 400, '#ffb02e');
-  outlined('수학 문제 설정', W / 2, 115, 28, '#ffd98a', '#7a3510');
-  text('(어른용) 지면 나오는 문제의 난이도를 골라요', W / 2, 150, 14, '#5a3d7a');
+  panel(210, 24, 540, 492, '#ffb02e');
+  outlined('어른 설정', W / 2, 56, 28, '#ffd98a', '#7a3510');
+  text('수학 문제 (지면 나와요)', W / 2, 92, 14, '#5a3d7a');
   const row = (y, label, opts, cur, set) => {
-    text(label, 300, y + 26, 17, '#3b2b4f');
+    text(label, 300, y + 24, 17, '#3b2b4f');
     opts.forEach(([v, name], i) => {
-      button(370 + i * 112, y, 104, 52, name, cur === v ? '#ff8a4c' : '#cfc6d8', () => { set(v); save(); sfx('tap'); }, null, false, 18);
+      button(370 + i * 112, y, 104, 48, name, cur === v ? '#ff8a4c' : '#cfc6d8', () => { set(v); save(); sfx('tap'); }, null, false, 18);
     });
   };
-  row(180, '자릿수', [['1', '한 자리'], ['2', '두 자리'], ['mix', '섞어서']], S.quiz.digits, v => S.quiz.digits = v);
-  row(256, '계산', [['+', '더하기'], ['-', '빼기'], ['+-', '둘 다']], S.quiz.ops, v => S.quiz.ops = v);
+  row(104, '자릿수', [['1', '한 자리'], ['2', '두 자리'], ['mix', '섞어서']], S.quiz.digits, v => S.quiz.digits = v);
+  row(162, '계산', [['+', '더하기'], ['-', '빼기'], ['+-', '둘 다']], S.quiz.ops, v => S.quiz.ops = v);
   const ex = (() => { const d = S.quiz.digits; return d === '1' ? '3 + 5' : d === '2' ? '23 + 14' : '3 + 14'; })();
-  text('예: ' + (S.quiz.ops === '-' ? ex.replace('+', '−') : ex) + ' = ?', W / 2, 340, 16, '#6b4a8f');
-  button(355, 380, 250, 60, '닫기', '#5fc95f', () => { mode = 'merge'; sfx('tap'); });
+  text('예: ' + (S.quiz.ops === '-' ? ex.replace('+', '−') : ex) + ' = ?', W / 2, 228, 15, '#6b4a8f');
+  text('아이 이름: ' + (P.name || '(없음)'), 380, 272, 18, '#3b2b4f');
+  button(510, 248, 170, 48, '이름 바꾸기', '#8fb8ff', changeName, null, false, 17);
+  button(250, 312, 220, 50, '비밀번호 바꾸기', '#a88bd6', () => openPin('set', () => { modal = 'settings'; }), null, false, 18);
+  button(490, 312, 220, 50, '처음부터 다시', '#ff8a8a', resetAll, null, false, 18);
+  if (screen === 'game') {
+    button(250, 376, 220, 50, '+10분 더 놀기', '#5fc95f', () => { P.sessionEnd += 600000; P.warned = 0; saveP(); toast('10분 늘었어요'); sfx('coin'); }, null, false, 18);
+    button(490, 376, 220, 50, '지금 끝내기', '#cfc6d8', lockNow, null, false, 18);
+  }
+  button(355, 446, 250, 52, '닫기', '#5fc95f', () => { modal = null; sfx('tap'); });
 }
 
 function drawFx(dt) {
@@ -945,26 +957,166 @@ function drawRotateHint() {
   text('휴대폰을 가로로 돌려 주세요', vw / 2, vh / 2 + 50, 20, '#fff');
 }
 
+/* ---------- 놀이 시간 관리 (어른용) ----------
+   로비에서 30분/1시간을 고르고 '시간 코인'을 확인한 뒤 시작. 시간이 끝나면 잠김.
+   어른 비밀번호(4자리)로 열거나, 다음날 0시가 지나면 저절로 풀림.
+   비밀번호·아이 이름·시간 정보는 이 기기 안에만 저장됨 (인터넷으로 보내지 않음) */
+const PKEY = 'spirit-pals-parent';
+function loadP() {
+  const d = { pin: null, name: '', lockDate: null, sessionEnd: 0, warned: 0 };
+  try { return Object.assign(d, JSON.parse(localStorage.getItem(PKEY)) || {}); } catch (e) { return d; }
+}
+let P = loadP();
+function saveP() { try { localStorage.setItem(PKEY, JSON.stringify(P)); } catch (e) {} }
+const dayKey = (t = Date.now()) => { const d = new Date(t); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+function nameCall() { // 현동 → ' 현동아', 지우 → ' 지우야'
+  const n = (P.name || '').trim(); if (!n) return '';
+  const c = n.charCodeAt(n.length - 1);
+  return ' ' + n + (c >= 0xAC00 && c <= 0xD7A3 && (c - 0xAC00) % 28 !== 0 ? '아' : '야');
+}
+let screen = 'lobby', modal = null, PIN = null, pendingMins = 30;
+function startScreen() {
+  if (P.lockDate === dayKey()) screen = 'locked';
+  else if (P.sessionEnd > Date.now()) screen = 'game';
+  else if (P.sessionEnd && dayKey(P.sessionEnd) === dayKey()) lockNow();
+  else { if (P.lockDate) { P.lockDate = null; saveP(); } screen = 'lobby'; }
+}
+function lockNow() {
+  P.lockDate = dayKey(); P.sessionEnd = 0; saveP();
+  screen = 'locked'; modal = null; PIN = null; drag = null;
+  B = null; result = null; Q = null; mode = 'merge'; enemy = genEnemies(S.stage);
+  for (const k in Music.sets) Music.sets[k].el.pause();
+  sfx('lose');
+}
+function checkTime() {
+  if (screen === 'locked') {
+    if (P.lockDate !== dayKey()) { P.lockDate = null; saveP(); screen = 'lobby'; Music.setOn(!S.musicOff); } // 다음날 0시 자동 풀림
+    return;
+  }
+  if (screen !== 'game') return;
+  const left = P.sessionEnd - Date.now();
+  if (left <= 0) { lockNow(); return; }
+  if (left <= 60000 && P.warned < 2) { P.warned = 2; saveP(); toast('1분 남았어요!', 2.5); sfx('nope'); }
+  else if (left <= 300000 && P.warned < 1) { P.warned = 1; saveP(); toast('5분 남았어요!', 2.5); sfx('tap'); }
+}
+function chooseTime(mins) {
+  sfx('tap'); pendingMins = mins;
+  if (!P.pin) { openPin('set', () => { modal = 'coin'; }); return; }
+  modal = 'coin';
+}
+function coinYes() {
+  P.sessionEnd = Date.now() + pendingMins * 60000; P.warned = 0; saveP();
+  modal = null; screen = 'game'; mode = 'merge'; enemy = genEnemies(S.stage);
+  sfx('start'); Music.play('calm');
+}
+function coinNo() { modal = null; sfx('nope'); toast('시간 코인을 넣고 다시 눌러 줘!', 2.4); }
+function openParent() { sfx('tap'); openPin(P.pin ? 'ask' : 'set', () => { modal = 'settings'; }); }
+function openPin(purpose, onOk) { PIN = { purpose, step: 1, input: '', first: '', msg: '', onOk, shake: 0 }; modal = 'pin'; }
+function pinKey(k) {
+  if (!PIN) return;
+  if (k === '취소') { PIN = null; modal = null; sfx('tap'); return; }
+  if (k === '←') { PIN.input = PIN.input.slice(0, -1); sfx('key', { rate: 0.8, gap: 0 }); return; }
+  if (PIN.input.length >= 4) return;
+  PIN.input += k; sfx('key', { rate: 0.9 + Number(k) * 0.035, gap: 0 });
+  if (PIN.input.length < 4) return;
+  if (PIN.purpose === 'set') {
+    if (PIN.step === 1) { PIN.first = PIN.input; PIN.input = ''; PIN.step = 2; PIN.msg = ''; }
+    else if (PIN.input === PIN.first) { P.pin = PIN.input; saveP(); const f = PIN.onOk; PIN = null; modal = null; toast('비밀번호를 정했어요'); sfx('correct'); if (f) f(); }
+    else { PIN.step = 1; PIN.input = ''; PIN.first = ''; PIN.msg = '두 번 누른 숫자가 달라요. 다시 정해 주세요'; PIN.shake = 0.4; sfx('wrong'); }
+  } else if (PIN.input === P.pin) { const f = PIN.onOk; PIN = null; modal = null; sfx('correct'); if (f) f(); }
+  else { PIN.input = ''; PIN.msg = '비밀번호가 달라요'; PIN.shake = 0.4; sfx('wrong'); }
+}
+function unlockByPin() {
+  sfx('tap');
+  openPin('ask', () => { P.lockDate = null; saveP(); screen = 'lobby'; Music.setOn(!S.musicOff); toast('잠금을 풀었어요'); });
+}
+function changeName() {
+  const n = prompt('아이 이름을 적어 주세요 (이 기기에만 저장돼요)', P.name || '');
+  if (n != null) { P.name = n.trim().slice(0, 10); saveP(); }
+}
+
+function drawLobby() {
+  outlined('정령 친구 합체!', W / 2, 100, 58, '#ffd23f', '#7a3510');
+  outlined('오늘은 얼마나 놀까?', W / 2, 172, 28, '#fff', '#2d4a14');
+  ELS.forEach((el, i) => drawUnit(250 + i * 115, 470, el, 5 + i * 4, false, { badge: false, s: 1.1 }));
+  button(230, 220, 220, 150, '30분', '#5fc95f', () => chooseTime(30), null, false, 46);
+  button(510, 220, 220, 150, '1시간', '#4aa8ff', () => chooseTime(60), null, false, 46);
+  if (!P.pin) outlined('처음에는 어른이 비밀번호 4자리를 먼저 정해요', W / 2, 400, 15, '#fff', '#2d4a14');
+  button(W - 150, H - 56, 136, 42, '어른 설정', '#a88bd6', openParent, null, false, 17);
+}
+function drawLocked() {
+  dimAll('rgba(20,10,40,0.6)');
+  outlined('아쉽지만 오늘 게임 시간은', W / 2, 140, 44, '#fff', '#3b2b4f');
+  outlined('끝났어' + nameCall() + '!', W / 2, 205, 54, '#ffd23f', '#7a3510');
+  outlined('내일 다시 만나요. 밤 12시가 지나면 다시 놀 수 있어요', W / 2, 268, 18, '#fff', '#3b2b4f');
+  drawUnit(W / 2 - 70, 360, 'water', 9, false, { badge: false, s: 1.3 });
+  drawUnit(W / 2 + 70, 360, 'fire', 9, false, { badge: false, s: 1.3, flip: true });
+  button(W / 2 - 120, 440, 240, 54, '어른: 비밀번호로 열기', '#8a7aa8', unlockByPin, null, false, 18);
+}
+function drawCoinAsk() {
+  btns = [];
+  panel(170, 80, 620, 380, '#ffb02e');
+  coinIcon(W / 2, 140, 30);
+  outlined('시간 코인은 넣었어?', W / 2, 225, 58, '#fff', '#7a3510');
+  text((pendingMins === 60 ? '1시간' : pendingMins + '분') + ' 동안 놀아요', W / 2, 282, 20, '#5a3d7a');
+  button(230, 330, 230, 96, '네', '#5fc95f', coinYes, null, false, 42);
+  button(500, 330, 230, 96, '아니요', '#cfc6d8', coinNo, null, false, 36);
+}
+function drawPinPad(dt) {
+  btns = [];
+  panel(250, 24, 460, 492, '#a88bd6');
+  PIN.shake = Math.max(0, PIN.shake - dt);
+  const title = PIN.purpose === 'set' ? (PIN.step === 1 ? '어른 비밀번호 4자리를 정해요' : '한 번 더 눌러 주세요') : '어른 비밀번호를 눌러 주세요';
+  outlined(title, W / 2, 66, 24, '#fff', '#4a2a8a');
+  const sh = PIN.shake ? Math.sin(now * 60) * 8 : 0;
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath(); ctx.arc(W / 2 - 66 + i * 44 + sh, 112, 13, 0, Math.PI * 2);
+    ctx.fillStyle = i < PIN.input.length ? '#4a2a8a' : 'rgba(74,42,138,0.18)'; ctx.fill();
+  }
+  if (PIN.msg) text(PIN.msg, W / 2, 146, 15, '#c94a1a');
+  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '취소', '0', '←'].forEach((k, i) => {
+    const c = i % 3, r = Math.floor(i / 3), x = W / 2 - 138 + c * 94, y = 168 + r * 82;
+    button(x, y, 88, 72, k, k === '취소' ? '#cfc6d8' : k === '←' ? '#ffa24c' : '#7fb2ff', () => pinKey(k), null, false, k === '취소' ? 20 : 30);
+  });
+}
+function drawTimer() {
+  const left = Math.max(0, P.sessionEnd - Date.now()), m = Math.floor(left / 60000), sec = Math.floor(left / 1000) % 60;
+  const cx = (PX + COLS * CELL + EX) / 2, warn = left <= 60000, mid = left <= 300000;
+  rr(cx - 92, 60, 184, 40, 20); ctx.fillStyle = warn ? '#ff5a6e' : mid ? '#ffb02e' : 'rgba(255,255,255,0.9)'; ctx.fill();
+  const label = '남은 시간 ' + m + ':' + String(sec).padStart(2, '0');
+  if (warn || mid) outlined(label, cx, 81, warn ? 21 + Math.sin(now * 8) : 20, '#fff', '#7a1030');
+  else text(label, cx, 81, 20, '#3b2b4f');
+}
+
+startScreen();
+
 let last = performance.now();
 function frame(t) {
   const dt = Math.min(0.05, (t - last) / 1000); last = t; now = t / 1000;
   for (let i = 0; i < N; i++) pops[i] = Math.max(0, pops[i] - dt * 3);
-  if (mode === 'battle') stepBattle(dt * speed);
+  checkTime();
+  if (screen === 'game' && !modal && mode === 'battle') stepBattle(dt * speed);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cv.width, cv.height);
   ctx.imageSmoothingQuality = 'high';
   drawBackground();
   btns = [];
-  drawBoard();
-  drawPicker();
-  drawMiddle();
-  if (mode === 'battle') drawBattle(); else drawMergeUnits();
-  drawTop();
-  drawBottom();
-  if (mode === 'result') drawResult();
-  if (mode === 'quiz') drawQuiz(dt);
-  if (mode === 'settings') drawSettings();
+  if (screen === 'game') {
+    drawBoard();
+    drawPicker();
+    drawMiddle();
+    if (mode === 'battle') drawBattle(); else drawMergeUnits();
+    drawTop();
+    drawBottom();
+    drawTimer();
+    if (mode === 'result') drawResult();
+    if (mode === 'quiz') drawQuiz(dt);
+  } else if (screen === 'lobby') drawLobby();
+  else drawLocked();
+  if (modal === 'coin') drawCoinAsk();
+  else if (modal === 'pin') drawPinPad(dt);
+  else if (modal === 'settings') drawSettings();
   drawFx(dt);
   drawRotateHint();
   requestAnimationFrame(frame);
