@@ -1,0 +1,1 @@
+{"cell": 160, "sheets": {"fire": {"count": 50, "cols": 10}, "wind": {"count": 50, "cols": 10}, "electric": {"count": 50, "cols": 10}, "earth": {"count": 50, "cols": 10}, "water": {"count": 47, "cols": 10}, "wind_electric": {"count": 5, "cols": 5}, "water_electric": {"count": 5, "cols": 5}, "earth_water": {"count": 5, "cols": 5}, "earth_fire": {"count": 5, "cols": 5}}}

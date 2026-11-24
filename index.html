@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <!-- 안전 장치: 이 페이지는 다른 사이트에 아무것도 요청할 수 없습니다 (광고, 추적, 외부 링크 차단).
-     'self'는 같은 폴더의 아이콘·manifest·오프라인용 sw.js만 허용합니다. -->
+     'self'는 같은 폴더의 그림·아이콘·manifest·오프라인용 sw.js만 허용합니다. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; connect-src 'self'; form-action 'none'">
 <title>정령 친구 합체!</title>
 <meta name="theme-color" content="#bfe4ff">
@@ -29,45 +29,108 @@
 'use strict';
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const W = 420, H = 780, COLS = 5, ROWS = 3, N = COLS * ROWS, CELL = 76;
-const GX = (W - COLS * CELL) / 2, EY = 84, PY = 404, MAXLV = 8;
+const GX = (W - COLS * CELL) / 2, EY = 84, PY = 404, MAXLV = 99, HYBRID_LV = 20;
 const FONT = "'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif";
 
+/* ---------- 원소와 혼합 ---------- */
+// 상성: 물 > 불 > 바람 > 땅 > 전기 > 물
 const EL = {
-  fire:  { c:'#ff8a4c', d:'#c94a1a', l:'#ffd36b', beats:'grass', label:'불',
-           names:['불씨','불똥이','활활이','화르르','불꽃대장','해님이','용암왕','불새님'] },
-  water: { c:'#5bb4ff', d:'#2a72c4', l:'#d4eeff', beats:'fire', label:'물',
-           names:['물방울','퐁당이','찰랑이','출렁이','파도대장','바다곰','소용돌이','고래님'] },
-  grass: { c:'#6fd46a', d:'#2f8f35', l:'#c8f5a8', beats:'water', label:'풀',
-           names:['새싹','떡잎이','풀잎이','꽃봉이','숲대장','나무곰','고목왕','세계수님'] },
-  wind:  { c:'#c3b0ff', d:'#6f55cf', l:'#f1ecff', beats:null, label:'바람',
-           names:['산들이','솔솔이','휘잉이','회오리','폭풍대장','구름곰','하늘용','바람님'] },
+  water:    { label:'물',   c:'#4aa8ff', beats:['fire'],     base:{ hp:34, atk:5, range:44,  spd:46, cd:0.9 } },
+  fire:     { label:'불',   c:'#ff7a3c', beats:['wind'],     base:{ hp:22, atk:8, range:44,  spd:58, cd:0.9 } },
+  wind:     { label:'바람', c:'#9fb4d6', beats:['earth'],    base:{ hp:20, atk:6, range:190, spd:44, cd:1.15 } },
+  earth:    { label:'땅',   c:'#9a7b55', beats:['electric'], base:{ hp:40, atk:5, range:44,  spd:40, cd:1.0 } },
+  electric: { label:'전기', c:'#ffd21f', beats:['water'],    base:{ hp:22, atk:7, range:120, spd:52, cd:0.8 } },
 };
-const ELS = ['fire','water','grass','wind'];
-const BASE = {
-  fire:  { hp:22, atk:8, range:44,  spd:58, cd:0.9 },
-  water: { hp:34, atk:5, range:44,  spd:46, cd:0.9 },
-  grass: { hp:28, atk:6, range:44,  spd:50, cd:0.9 },
-  wind:  { hp:20, atk:6, range:190, spd:44, cd:1.15 },
+const ELS = ['water', 'fire', 'wind', 'earth', 'electric'];
+const HY = {
+  wind_electric:  { pair:['wind','electric'],  c:'#a58cff', names:['뇌구름','번개 회오리','뇌조','번개 늑대','뇌폭룡'] },
+  water_electric: { pair:['water','electric'], c:'#3fd0ff', names:['찌릿방울','번개여우','해일늑대','뇌해사자','뇌해룡'] },
+  earth_water:    { pair:['earth','water'],    c:'#5fae8e', names:['진흙콩','이끼바위','바위방울','소용돌흙','샘물골렘'] },
+  earth_fire:     { pair:['earth','fire'],     c:'#e0582a', names:['화산콩','용암뿔이','화산거인','마그마왕','화염고목룡'] },
 };
-function stats(el, lv) {
-  const b = BASE[el], m = Math.pow(2.1, lv - 1);
-  return { maxhp: Math.round(b.hp * m), atk: b.atk * m, range: b.range, spd: b.spd, cd: b.cd };
+for (const k in HY) {
+  const [a, b] = HY[k].pair, A = EL[a].base, B = EL[b].base;
+  HY[k].label = EL[a].label + '+' + EL[b].label;
+  HY[k].beats = EL[a].beats.concat(EL[b].beats);
+  HY[k].base = { hp:(A.hp + B.hp) * 0.65, atk:(A.atk + B.atk) * 0.65, range:Math.max(A.range, B.range), spd:Math.max(A.spd, B.spd), cd:Math.min(A.cd, B.cd) };
+}
+const info = k => EL[k] || HY[k];
+const isHybrid = k => !!HY[k];
+function hybridOf(a, b) {
+  for (const k in HY) { const p = HY[k].pair; if ((p[0] === a && p[1] === b) || (p[0] === b && p[1] === a)) return k; }
+  return null;
+}
+const band = lv => Math.floor(lv / HYBRID_LV);
+// 두 친구가 합쳐지면 무엇이 되는지 (안 되면 null)
+function mergeResult(a, b) {
+  if (!a || !b) return null;
+  if (a.el === b.el && a.lv === b.lv && a.lv < MAXLV) return { el:a.el, lv:a.lv + 1 };
+  if (!isHybrid(a.el) && !isHybrid(b.el) && a.el !== b.el && a.lv >= HYBRID_LV && b.lv >= HYBRID_LV && band(a.lv) === band(b.lv)) {
+    const h = hybridOf(a.el, b.el);
+    if (h) return { el:h, lv:Math.min(MAXLV, Math.max(a.lv, b.lv) + 1) };
+  }
+  return null;
+}
+function stats(k, lv) {
+  const b = info(k).base, m = Math.pow(1.38, lv - 1);
+  return { maxhp: b.hp * m, atk: b.atk * m, range: b.range, spd: b.spd, cd: b.cd };
+}
+function unitName(u) {
+  if (isHybrid(u.el)) return HY[u.el].names[hyForm(u.lv)];
+  return info(u.el).label + ' 정령';
+}
+
+/* ---------- 그림 (assets 폴더의 스프라이트 묶음) ---------- */
+const SPR = 160;
+const SHEETS = { fire:50, wind:50, electric:50, earth:50, water:47, wind_electric:5, water_electric:5, earth_water:5, earth_fire:5 };
+const IMGS = {};
+for (const k in SHEETS) { const im = new Image(); im.src = 'assets/' + k + '.webp'; IMGS[k] = im; }
+const hyForm = lv => lv >= MAXLV ? 4 : Math.max(0, Math.min(3, band(lv) - 1));
+const SKIP = { fire: 2 }; // 불 Lv1~2 그림(작은 불씨)은 너무 작아서 건너뜀
+function spriteIndex(k, lv) {
+  if (isHybrid(k)) return hyForm(lv);
+  const s = SKIP[k] || 0, n = SHEETS[k] - s;
+  return s + Math.min(n - 1, Math.floor((lv - 1) * n / MAXLV));
+}
+const sprCache = {};
+// 한 칸을 잘라 캔버스로 보관 (적은 붉은 빛을 둘러서 미리 그려 둠)
+function sprite(k, idx, foe) {
+  const key = k + idx + (foe ? 'e' : '');
+  if (sprCache[key]) return sprCache[key];
+  const im = IMGS[k];
+  if (!im.complete || !im.naturalWidth) return null;
+  const cols = SHEETS[k] > 5 ? 10 : 5, pad = 12;
+  const c = document.createElement('canvas'); c.width = c.height = SPR + pad * 2;
+  const g = c.getContext('2d');
+  if (foe) { g.shadowColor = 'rgba(230,20,90,0.95)'; g.shadowBlur = 10; }
+  g.drawImage(im, (idx % cols) * SPR, Math.floor(idx / cols) * SPR, SPR, SPR, pad, pad, SPR, SPR);
+  if (foe) g.drawImage(c, 0, 0); // 빛을 한 번 더 진하게
+  return (sprCache[key] = c);
 }
 
 /* ---------- 저장 (이 기기 안에만) ---------- */
-const SAVE = 'spirit-pals-v1';
-function fresh() { return { coins:20, stage:1, bought:0, grid:Array(N).fill(null), found:{}, merged:0, muted:false }; }
+const SAVE = 'spirit-pals-v2';
+function fresh() { return { coins:20, stage:1, grid:Array(N).fill(null), found:{}, merged:0, muted:false }; }
 function load() {
   try {
-    const s = JSON.parse(localStorage.getItem(SAVE));
-    if (s && Array.isArray(s.grid) && s.grid.length === N) return Object.assign(fresh(), s);
+    let s = JSON.parse(localStorage.getItem(SAVE));
+    if (!s) { // 예전 버전 저장을 이어받기 (풀 → 땅)
+      s = JSON.parse(localStorage.getItem('spirit-pals-v1'));
+      if (s && Array.isArray(s.grid)) { s.grid = s.grid.map(u => u && { el: u.el === 'grass' ? 'earth' : u.el, lv: u.lv }); s.found = {}; }
+    }
+    if (s && Array.isArray(s.grid) && s.grid.length === N) {
+      s.grid = s.grid.map(u => u && info(u.el) ? { el:u.el, lv:Math.max(1, Math.min(MAXLV, u.lv | 0)) } : null);
+      return Object.assign(fresh(), s);
+    }
   } catch (e) {}
   return fresh();
 }
 function save() { try { localStorage.setItem(SAVE, JSON.stringify(S)); } catch (e) {} }
 let S = load();
-const cost = () => 3 + Math.floor(S.bought * 0.8);
-const winReward = st => 8 + st * 4;
+const summonLv = st => Math.min(MAXLV - 2, 1 + Math.floor((st - 1) * 0.5));
+const cost = () => 4 + Math.floor(S.stage * 0.6);
+const winReward = st => 12 + st * 3;
+const loseReward = st => 4 + st;
 
 /* ---------- 상대 만들기 (스테이지마다 항상 같은 배치) ---------- */
 function rng(seed) {
@@ -79,20 +142,22 @@ function rng(seed) {
   };
 }
 function genEnemies(st) {
-  const R = rng(st * 7919 + 17);
-  let b = Math.round(1 + st * 0.9 + Math.pow(1.13, st));
+  const R = rng(st * 7919 + 17), sl = summonLv(st);
+  let b = Math.min(24, 2 + Math.floor(st * 0.45));
+  const maxOff = Math.min(5, 1 + Math.floor(st / 5));
   const g = Array(N).fill(null);
-  const maxLv = Math.min(MAXLV, 1 + Math.floor((st + 1) / 3));
   while (b > 0) {
-    let lv = Math.min(maxLv, Math.floor(Math.log2(b)) + 1);
-    if (lv > 1 && R() < 0.35) lv--;
+    const off = Math.floor(R() * (Math.min(maxOff, Math.floor(Math.log2(b))) + 1));
     const empty = []; g.forEach((u, i) => { if (!u) empty.push(i); });
     if (!empty.length) break;
     const front = empty.filter(i => i >= 2 * COLS);
     const pool = front.length && R() < 0.6 ? front : empty;
     const i = pool[Math.floor(R() * pool.length)];
-    g[i] = { el: ELS[Math.floor(R() * 4)], lv };
-    b -= 1 << (lv - 1);
+    const lv = Math.min(MAXLV, sl + off);
+    let el = ELS[Math.floor(R() * ELS.length)];
+    if (lv >= HYBRID_LV && R() < 0.3) { const ks = Object.keys(HY); el = ks[Math.floor(R() * ks.length)]; }
+    g[i] = { el, lv };
+    b -= 1 << off;
   }
   return g;
 }
@@ -133,11 +198,17 @@ function burst(x, y, color, n = 12) {
 }
 function floatText(x, y, txt, color) { texts.push({ x, y, txt, color, t: 0 }); }
 function toast(txt, dur = 2) { toastMsg = { txt, t: 0, dur }; }
+function fmt(n) {
+  n = Math.round(n);
+  if (n < 1e4) return String(n);
+  if (n < 1e8) return (n / 1e4).toFixed(n < 1e5 ? 1 : 0) + '만';
+  if (n < 1e12) return (n / 1e8).toFixed(n < 1e9 ? 1 : 0) + '억';
+  if (n < 1e16) return (n / 1e12).toFixed(n < 1e13 ? 1 : 0) + '조';
+  return (n / 1e16).toFixed(0) + '경';
+}
 
 /* ---------- 그리기 도우미 ---------- */
 function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
-function hex2rgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
-function mix(a, b, k) { const A = hex2rgb(a), B = hex2rgb(b); return 'rgb(' + A.map((v, i) => Math.round(v + (B[i] - v) * k)).join(',') + ')'; }
 function text(t, x, y, size, color, align = 'center', weight = 'bold') {
   ctx.font = weight + ' ' + size + 'px ' + FONT; ctx.textAlign = align; ctx.textBaseline = 'middle';
   ctx.fillStyle = color; ctx.fillText(t, x, y);
@@ -153,77 +224,42 @@ function coinIcon(x, y, r) {
   ctx.beginPath(); ctx.arc(x, y, r * 0.55, 0, Math.PI * 2); ctx.strokeStyle = '#e8a923'; ctx.stroke();
 }
 
-function shapes(el, x, y, r, t) {
-  const ps = [];
-  if (el === 'fire' || el === 'water') {
-    const tip = el === 'fire' ? 1.7 + Math.sin(t * 9 + x) * 0.08 : 1.45;
-    const a = Math.PI / 4, p = new Path2D();
-    p.moveTo(x + r * Math.cos(a), y - r * Math.sin(a));
-    p.arc(x, y, r, -a, Math.PI + a, false);
-    p.quadraticCurveTo(x - r * 0.35, y - r * 1.05, x, y - r * tip);
-    p.quadraticCurveTo(x + r * 0.35, y - r * 1.05, x + r * Math.cos(a), y - r * Math.sin(a));
-    p.closePath(); ps.push(p);
-  } else if (el === 'grass') {
-    const p = new Path2D(); p.arc(x, y, r, 0, Math.PI * 2); ps.push(p);
+// 캐릭터 그리기: 숨쉬기·통통 튀기·흔들림 애니메이션은 여기서 만듦
+// opt: { s: 크기 배율, alpha, flip, hit, lunge, badge }
+function drawUnit(x, y, k, lv, foe, opt = {}) {
+  const s = opt.s || 1, t = now, ph = x * 0.071 + y * 0.037;
+  const size = (46 + lv * 0.28 + (isHybrid(k) ? 6 : 0)) * s;
+  const breathe = Math.sin(t * 3.1 + ph) * 0.035;
+  const bob = Math.abs(Math.sin(t * 2.2 + ph)) * -2.5 * s;
+  const sway = Math.sin(t * 1.7 + ph) * 0.04;
+  ctx.save();
+  ctx.globalAlpha = opt.alpha == null ? 1 : opt.alpha;
+  // 그림자
+  ctx.fillStyle = 'rgba(40,20,60,0.16)';
+  ctx.beginPath(); ctx.ellipse(x, y + size * 0.42, size * 0.36 * (1 - bob / 30), size * 0.09, 0, 0, Math.PI * 2); ctx.fill();
+  const img = sprite(k, spriteIndex(k, lv), foe);
+  ctx.translate(x, y + size * 0.45 + bob);
+  ctx.rotate(sway);
+  ctx.scale((opt.flip ? -1 : 1) * (1 - breathe * 0.6), 1 + breathe);
+  if (img) {
+    const d = size * (img.width / SPR);
+    ctx.drawImage(img, -d / 2, -d + size * (12 / SPR), d, d);
+    if (opt.hit > 0) { // 맞으면 하얗게 번쩍
+      ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha *= Math.min(1, opt.hit * 6) * 0.6;
+      ctx.drawImage(img, -d / 2, -d + size * (12 / SPR), d, d);
+      ctx.globalCompositeOperation = 'source-over';
+    }
   } else {
-    [[0, 0.1, 0.9], [-0.62, 0.25, 0.6], [0.62, 0.25, 0.6], [-0.3, -0.45, 0.6], [0.35, -0.4, 0.55]].forEach(([dx, dy, k]) => {
-      const p = new Path2D(); p.arc(x + dx * r, y + dy * r, r * k, 0, Math.PI * 2); ps.push(p);
-    });
+    ctx.beginPath(); ctx.arc(0, -size * 0.4, size * 0.35, 0, Math.PI * 2); ctx.fillStyle = info(k).c; ctx.fill();
   }
-  return ps;
-}
-
-function drawUnit(x, y, el, lv, foe, s = 1, alpha = 1, look = 0) {
-  const e = EL[el], r = (13 + lv * 2.4) * s, t = now;
-  ctx.save(); ctx.globalAlpha = alpha;
-  ctx.fillStyle = 'rgba(40,20,60,0.13)';
-  ctx.beginPath(); ctx.ellipse(x, y + r * 1.0, r * 0.9, r * 0.26, 0, 0, Math.PI * 2); ctx.fill();
-  const by = y + Math.sin(t * 4 + x * 0.07) * 1.5 * s;
-  const fill = foe ? mix(e.c, '#6b3f8f', 0.4) : e.c, line = foe ? '#46265f' : e.d;
-  ctx.lineJoin = 'round';
-  if (foe) { // 작은 뿔
-    ctx.fillStyle = line;
-    [-1, 1].forEach(sd => {
-      ctx.beginPath(); ctx.moveTo(x + sd * r * 0.3, by - r * 0.8); ctx.lineTo(x + sd * r * 0.75, by - r * 1.35);
-      ctx.lineTo(x + sd * r * 0.75, by - r * 0.55); ctx.closePath(); ctx.fill();
-    });
-  }
-  if (el === 'grass') { // 잎사귀
-    ctx.save(); ctx.translate(x + r * 0.15, by - r * 0.98); ctx.rotate(-0.6 + Math.sin(t * 3) * 0.1);
-    ctx.beginPath(); ctx.ellipse(r * 0.3, 0, r * 0.45, r * 0.2, 0, 0, Math.PI * 2);
-    ctx.fillStyle = foe ? '#5d8f4a' : '#3fae3f'; ctx.fill(); ctx.lineWidth = 2.5 * s; ctx.strokeStyle = line; ctx.stroke();
-    ctx.restore();
-  }
-  const ps = shapes(el, x, by, r, t);
-  ctx.strokeStyle = line; ctx.lineWidth = 5 * s; ps.forEach(p => ctx.stroke(p));
-  ctx.fillStyle = fill; ps.forEach(p => ctx.fill(p));
-  // 배 / 반짝임
-  if (el === 'fire') { ctx.fillStyle = foe ? 'rgba(255,200,120,0.45)' : e.l; ctx.beginPath(); ctx.ellipse(x, by + r * 0.45, r * 0.45, r * 0.35, 0, 0, Math.PI * 2); ctx.fill(); }
-  if (el === 'water') { ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.beginPath(); ctx.ellipse(x - r * 0.5, by - r * 0.35, r * 0.13, r * 0.25, 0.5, 0, Math.PI * 2); ctx.fill(); }
-  // 얼굴
-  const ey = by - r * 0.05, ex = r * 0.36, er = r * 0.24;
-  const lx = Math.cos(look) * er * 0.3, ly = Math.sin(look) * er * 0.3;
-  [-1, 1].forEach(sd => {
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x + sd * ex, ey, er, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#2b2340'; ctx.beginPath(); ctx.arc(x + sd * ex + lx, ey + ly, er * 0.55, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x + sd * ex + lx - er * 0.18, ey + ly - er * 0.2, er * 0.18, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = 'rgba(255,120,150,0.45)'; ctx.beginPath(); ctx.ellipse(x + sd * r * 0.64, by + r * 0.3, r * 0.15, r * 0.09, 0, 0, Math.PI * 2); ctx.fill();
-  });
-  ctx.strokeStyle = '#2b2340'; ctx.lineWidth = 2.2 * s; ctx.lineCap = 'round';
-  ctx.beginPath();
-  if (foe) {
-    [-1, 1].forEach(sd => { ctx.moveTo(x + sd * (ex + er), ey - er * 1.5); ctx.lineTo(x + sd * (ex - er * 0.6), ey - er * 0.95); });
-    ctx.moveTo(x - r * 0.15, by + r * 0.42); ctx.quadraticCurveTo(x, by + r * 0.3, x + r * 0.15, by + r * 0.42);
-  } else {
-    ctx.arc(x, by + r * 0.25, r * 0.2, Math.PI * 0.15, Math.PI * 0.85);
-  }
-  ctx.stroke();
-  // 레벨 배지
-  const bx = x + r * 0.85, byy = by + r * 0.75, br = 8.5 * Math.max(0.7, s);
-  ctx.beginPath(); ctx.arc(bx, byy, br, 0, Math.PI * 2);
-  ctx.fillStyle = lv >= 5 ? '#ffd23f' : '#fff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = line; ctx.stroke();
-  text(String(lv), bx, byy + 0.5, Math.round(br * 1.35), '#3b2b4f');
   ctx.restore();
+  if (opt.badge !== false) {
+    const bx = x + size * 0.36, by = y + size * 0.36, w = lv >= 10 ? 22 : 16;
+    rr(bx - w / 2, by - 8, w, 16, 8);
+    ctx.fillStyle = foe ? '#ff4d7a' : (isHybrid(k) ? '#ffd23f' : '#fff'); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = foe ? '#7a1030' : '#3b2b4f'; ctx.stroke();
+    text(String(lv), bx, by + 0.5, 11, foe ? '#fff' : '#3b2b4f');
+  }
 }
 
 /* ---------- 버튼 ---------- */
@@ -233,7 +269,7 @@ function button(x, y, w, h, label, color, fn, sub, disabled) {
   rr(x, y + 5, w, h, 18); ctx.fillStyle = 'rgba(60,30,80,0.25)'; ctx.fill();
   rr(x, y, w, h, 18); ctx.fillStyle = disabled ? '#cfc6d8' : color; ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(60,30,80,0.35)'; ctx.stroke();
-  if (sub) { outlined(label, x + w / 2, y + h / 2 - 11, 22, '#fff'); sub(x + w / 2, y + h / 2 + 17); }
+  if (sub) { outlined(label, x + w / 2, y + h / 2 - 12, 21, '#fff'); sub(x + w / 2, y + h / 2 + 16); }
   else outlined(label, x + w / 2, y + h / 2, 24, '#fff');
   ctx.restore();
   btns.push({ x, y, w, h, fn });
@@ -244,18 +280,18 @@ let mode = 'merge', B = null, speed = 1, result = null, drag = null, now = 0;
 
 function cellPos(side, i) {
   const c = i % COLS, r = Math.floor(i / COLS), y0 = side === 'p' ? PY : EY;
-  return { x: GX + c * CELL + CELL / 2, y: y0 + r * CELL + CELL / 2 + 6 };
+  return { x: GX + c * CELL + CELL / 2, y: y0 + r * CELL + CELL / 2 - 4 };
 }
 function cellAt(x, y) {
   const c = Math.floor((x - GX) / CELL), r = Math.floor((y - PY) / CELL);
   if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return -1;
   return r * COLS + c;
 }
-function discover(el, lv) {
-  if ((S.found[el] || 0) >= lv) return;
-  S.found[el] = lv;
-  toast('새 친구 발견!  ' + EL[el].names[lv - 1]);
-  tune([784, 988, 1175, 1568], 0.08);
+function discover(u) {
+  const key = u.el + ':' + spriteIndex(u.el, u.lv);
+  if (S.found[key]) return false;
+  S.found[key] = 1;
+  return true;
 }
 
 function buy() {
@@ -263,13 +299,15 @@ function buy() {
   const empty = []; S.grid.forEach((u, i) => { if (!u) empty.push(i); });
   if (!empty.length) { toast('자리가 꽉 찼어요! 같은 친구끼리 합체해 봐요'); beep(200, 0.15, 'square', 0.05); return; }
   if (S.coins < c) { toast('코인이 모자라요. 싸워서 코인을 모아요!'); beep(200, 0.15, 'square', 0.05); return; }
-  S.coins -= c; S.bought++;
+  S.coins -= c;
   const i = empty[Math.floor(Math.random() * empty.length)];
-  const el = ELS[Math.floor(Math.random() * 4)];
-  S.grid[i] = { el, lv: 1 }; pops[i] = 1;
+  const el = ELS[Math.floor(Math.random() * ELS.length)];
+  const u = { el, lv: summonLv(S.stage) };
+  S.grid[i] = u; pops[i] = 1;
   const p = cellPos('p', i); burst(p.x, p.y, EL[el].c, 8);
   beep(520, 0.1, 'triangle', 0.1, 1.6);
-  discover(el, 1); save();
+  if (discover(u)) toast('새 친구! ' + unitName(u) + ' Lv.' + u.lv, 1.6);
+  save();
 }
 
 function mkF(side, u, i) {
@@ -287,12 +325,13 @@ function startBattle() {
 }
 function hitF(a, b) {
   if (b.dead) return;
-  const adv = EL[a.el].beats === b.el;
-  const dmg = Math.max(1, Math.round(a.atk * (adv ? 1.6 : 1) * (0.9 + Math.random() * 0.2)));
+  const adv = info(a.el).beats.includes(isHybrid(b.el) ? null : b.el) ||
+              (isHybrid(b.el) && HY[b.el].pair.some(p => info(a.el).beats.includes(p)));
+  const dmg = Math.max(1, a.atk * (adv ? 1.6 : 1) * (0.9 + Math.random() * 0.2));
   b.hp -= dmg; b.hit = 0.15;
-  floatText(b.x + (Math.random() - 0.5) * 16, b.y - 22, adv ? '최고! ' + dmg : String(dmg), adv ? '#ffd23f' : '#fff');
+  floatText(b.x + (Math.random() - 0.5) * 16, b.y - 26, adv ? '최고! ' + fmt(dmg) : fmt(dmg), adv ? '#ffd23f' : '#fff');
   beep(adv ? 700 : 420, 0.06, 'triangle', 0.05);
-  if (b.hp <= 0) { b.dead = true; b.deadT = 0; burst(b.x, b.y, EL[b.el].c, 14); beep(330, 0.2, 'sine', 0.08, 0.5); }
+  if (b.hp <= 0) { b.dead = true; b.deadT = 0; burst(b.x, b.y, info(b.el).c, 14); beep(330, 0.2, 'sine', 0.08, 0.5); }
 }
 function stepBattle(dt) {
   B.t += dt;
@@ -307,7 +346,7 @@ function stepBattle(dt) {
     if (bd > f.range) { const k = Math.min(1, f.spd * dt / bd); f.x += (best.x - f.x) * k; f.y += (best.y - f.y) * k; }
     else if (f.cdT <= 0) {
       f.cdT = f.cd; f.lunge = 0.18;
-      if (f.el === 'wind') { B.proj.push({ x: f.x, y: f.y, t: best, src: f }); beep(900, 0.05, 'sine', 0.03, 0.6); }
+      if (f.range > 60) { B.proj.push({ x: f.x, y: f.y - 14, t: best, src: f }); beep(900, 0.05, 'sine', 0.03, 0.6); }
       else hitF(f, best);
     }
     for (const g of F) {
@@ -319,7 +358,7 @@ function stepBattle(dt) {
   }
   B.proj = B.proj.filter(p => {
     if (p.t.dead) return false;
-    const dx = p.t.x - p.x, dy = p.t.y - p.y, d = Math.hypot(dx, dy);
+    const dx = p.t.x - p.x, dy = p.t.y - 14 - p.y, d = Math.hypot(dx, dy);
     if (d < 12) { hitF(p.src, p.t); return false; }
     const k = Math.min(1, 330 * dt / d); p.x += dx * k; p.y += dy * k; return true;
   });
@@ -332,11 +371,16 @@ function stepBattle(dt) {
   }
 }
 function endBattle(win) {
-  const reward = win ? winReward(S.stage) : 5;
+  const reward = win ? winReward(S.stage) : loseReward(S.stage);
   S.coins += reward;
+  const oldSl = summonLv(S.stage);
   result = { win, reward, stage: S.stage };
-  if (win) { S.stage++; tune([523, 659, 784, 1047, 1319], 0.1); for (let i = 0; i < 4; i++) burst(80 + i * 90, 300, ['#ffd23f', '#ff8a4c', '#5bb4ff', '#6fd46a'][i], 16); }
-  else tune([440, 392, 349], 0.15, 'sine');
+  if (win) {
+    S.stage++;
+    result.slUp = summonLv(S.stage) > oldSl ? summonLv(S.stage) : 0;
+    tune([523, 659, 784, 1047, 1319], 0.1);
+    for (let i = 0; i < 5; i++) burst(60 + i * 75, 300, info(ELS[i]).c, 14);
+  } else tune([440, 392, 349], 0.15, 'sine');
   save(); mode = 'result';
 }
 function closeResult() { mode = 'merge'; B = null; result = null; enemy = genEnemies(S.stage); beep(660, 0.08); }
@@ -356,26 +400,38 @@ cv.addEventListener('pointerdown', e => {
   if (i >= 0 && S.grid[i]) { drag = { i, x: p.x, y: p.y, sx: p.x, sy: p.y }; cv.setPointerCapture(e.pointerId); beep(600, 0.04, 'sine', 0.05); }
 });
 cv.addEventListener('pointermove', e => { if (!drag) return; const p = toLogical(e); drag.x = p.x; drag.y = p.y; });
-cv.addEventListener('pointerup', e => {
+cv.addEventListener('pointerup', () => {
   if (!drag) return;
   const d = drag; drag = null;
   const j = cellAt(d.x, d.y), a = S.grid[d.i];
   if (!a) return;
   if (Math.hypot(d.x - d.sx, d.y - d.sy) < 8) { // 톡 누르면 이름 보기
     const st = stats(a.el, a.lv);
-    toast(EL[a.el].names[a.lv - 1] + ' (' + EL[a.el].label + ' ' + a.lv + '단계)  체력 ' + st.maxhp + ' · 힘 ' + Math.round(st.atk), 1.6);
+    let tip = '';
+    if (!isHybrid(a.el) && a.lv >= HYBRID_LV) {
+      const mates = Object.values(HY).filter(h => h.pair.includes(a.el)).map(h => EL[h.pair[0] === a.el ? h.pair[1] : h.pair[0]].label);
+      if (mates.length) tip = '  · ' + mates.join('/') + '와 혼합 가능';
+    }
+    toast(unitName(a) + ' Lv.' + a.lv + '  체력 ' + fmt(st.maxhp) + ' · 힘 ' + fmt(st.atk) + tip, 2.2);
     return;
   }
   if (j < 0 || j === d.i) return;
   const b = S.grid[j];
+  const m = mergeResult(a, b);
   if (!b) { S.grid[j] = a; S.grid[d.i] = null; pops[j] = 0.5; beep(500, 0.05); }
-  else if (b.el === a.el && b.lv === a.lv && a.lv < MAXLV) {
-    S.grid[j] = { el: a.el, lv: a.lv + 1 }; S.grid[d.i] = null; pops[j] = 1; S.merged++;
-    const p = cellPos('p', j); burst(p.x, p.y, EL[a.el].c, 18); burst(p.x, p.y, '#fff7b0', 8);
-    rings.push({ x: p.x, y: p.y, t: 0, color: EL[a.el].c });
-    tune([523 * Math.pow(1.06, a.lv * 2), 659 * Math.pow(1.06, a.lv * 2), 784 * Math.pow(1.06, a.lv * 2)], 0.06);
-    discover(a.el, a.lv + 1);
-  } else if (b.el === a.el && b.lv === a.lv) { toast('이미 최고 단계예요!'); }
+  else if (m) {
+    const hybridNew = m.el !== a.el;
+    const evolved = spriteIndex(m.el, m.lv) !== spriteIndex(a.el, a.lv) || hybridNew;
+    S.grid[j] = m; S.grid[d.i] = null; pops[j] = 1; S.merged++;
+    const p = cellPos('p', j);
+    burst(p.x, p.y, info(a.el).c, 16); burst(p.x, p.y, info(b.el).c, hybridNew ? 16 : 0); burst(p.x, p.y, '#fff7b0', 8);
+    rings.push({ x: p.x, y: p.y, t: 0, color: info(m.el).c });
+    if (hybridNew) { rings.push({ x: p.x, y: p.y, t: -0.15, color: '#ffd23f' }); tune([523, 659, 784, 1047, 1319, 1568], 0.07); }
+    else { const f = Math.pow(1.012, m.lv); tune([523 * f, 659 * f, 784 * f], 0.06); }
+    const fresh = discover(m);
+    if (hybridNew) toast('혼합 진화! ' + unitName(m) + ' Lv.' + m.lv, 2.4);
+    else if (evolved && fresh) toast('진화! ' + unitName(m) + ' Lv.' + m.lv, 1.8);
+  } else if (b.el === a.el && b.lv === a.lv) { toast('이미 최고 레벨이에요!'); }
   else { S.grid[j] = a; S.grid[d.i] = b; pops[j] = 0.4; pops[d.i] = 0.4; beep(450, 0.05); }
   save();
 });
@@ -393,42 +449,40 @@ function drawBoard() {
   const g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, '#bfe4ff'); g.addColorStop(0.45, '#fff4dd'); g.addColorStop(1, '#d9f3c6');
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  // 구역
   rr(GX - 8, EY - 4, COLS * CELL + 16, ROWS * CELL + 12, 22); ctx.fillStyle = 'rgba(150,110,200,0.16)'; ctx.fill();
   rr(GX - 8, PY - 4, COLS * CELL + 16, ROWS * CELL + 12, 22); ctx.fillStyle = 'rgba(100,190,100,0.2)'; ctx.fill();
-  const showCells = mode === 'merge' || mode === 'result';
+  const showCells = mode !== 'battle';
+  const dragU = drag && S.grid[drag.i];
   for (let i = 0; i < N; i++) {
     const c = i % COLS, r = Math.floor(i / COLS);
-    if (showCells) {
-      rr(GX + c * CELL + 4, EY + r * CELL + 4, CELL - 8, CELL - 8, 14); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fill();
-    }
+    if (showCells) { rr(GX + c * CELL + 4, EY + r * CELL + 4, CELL - 8, CELL - 8, 14); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fill(); }
     rr(GX + c * CELL + 4, PY + r * CELL + 4, CELL - 8, CELL - 8, 14);
-    let hl = false;
-    if (drag && i !== drag.i) { const a = S.grid[drag.i], b = S.grid[i]; hl = b && a && b.el === a.el && b.lv === a.lv && a.lv < MAXLV; }
-    ctx.fillStyle = hl ? 'rgba(255,230,90,0.75)' : showCells ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.25)'; ctx.fill();
-    if (hl) { ctx.lineWidth = 3; ctx.strokeStyle = '#f0a500'; ctx.stroke(); }
+    let hl = null;
+    if (dragU && i !== drag.i) { const m = mergeResult(dragU, S.grid[i]); if (m) hl = m.el !== dragU.el ? 'hy' : 'same'; }
+    ctx.fillStyle = hl === 'hy' ? 'rgba(190,150,255,0.8)' : hl ? 'rgba(255,230,90,0.75)' : showCells ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.25)'; ctx.fill();
+    if (hl) { ctx.lineWidth = 3; ctx.strokeStyle = hl === 'hy' ? '#7b4dff' : '#f0a500'; ctx.stroke(); }
   }
   text('말썽 정령들', W / 2, EY - 13, 12, '#6b4a8f');
 }
 
 function drawMiddle() {
-  const my = (EY + ROWS * CELL + PY) / 2 + 2;
   if (mode === 'battle') return;
-  // 상성표: 불 > 풀 > 물 > 불, 바람은 멀리서
-  const xs = [70, 150, 230, 310];
-  const order = ['fire', 'grass', 'water', 'fire'];
-  order.forEach((el, k) => drawUnit(xs[k] - 8, my - 4, el, 1, false, 0.62));
-  for (let k = 0; k < 3; k++) outlined('▶', xs[k] + 32, my - 6, 16, '#ffd23f', '#a06a00');
-  drawUnit(370, my - 4, 'wind', 1, false, 0.62);
-  text('▶ 쪽을 이겨요', 150, my + 24, 12, '#6b4a8f');
-  text('바람은 멀리서 쏴요', 362, my + 24, 12, '#6b4a8f');
+  const my = (EY + ROWS * CELL + PY) / 2 - 6;
+  // 상성표: 물 ▶ 불 ▶ 바람 ▶ 땅 ▶ 전기 ▶ 물
+  const order = ['water', 'fire', 'wind', 'earth', 'electric', 'water'];
+  const pick = { water: 30, fire: 12, wind: 44, earth: 12, electric: 16 }; // 원소가 잘 보이는 모습
+  order.forEach((el, k) => {
+    const x = 38 + k * 69;
+    drawUnit(x, my - 10, el, pick[el], false, { s: 0.62, badge: false });
+    if (k < 5) outlined('▶', x + 35, my - 4, 14, '#ffd23f', '#a06a00');
+  });
+  text('▶ 쪽을 이겨요 · 바람과 전기는 멀리서 쏴요 · Lv' + HYBRID_LV + '부터 혼합!', W / 2, my + 26, 11.5, '#6b4a8f');
 }
 
 function drawTop() {
   rr(10, 10, W - 20, 50, 18); ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fill();
   outlined('스테이지 ' + S.stage, 82, 35, 20, '#ff8a4c', '#7a3510');
-  coinIcon(205, 35, 12); outlined(String(S.coins), 250, 35, 22, '#ffd23f', '#8a5a00');
-  // 소리 버튼
+  coinIcon(190, 35, 12); outlined(fmt(S.coins), 240, 35, 21, '#ffd23f', '#8a5a00');
   const mx = W - 58, my = 16;
   rr(mx, my, 40, 38, 12); ctx.fillStyle = S.muted ? '#cfc6d8' : '#8fd3ff'; ctx.fill();
   ctx.fillStyle = '#3b2b4f'; ctx.beginPath();
@@ -442,34 +496,39 @@ function drawTop() {
 }
 
 function drawMergeUnits() {
-  enemy.forEach((u, i) => { if (u) { const p = cellPos('e', i); drawUnit(p.x, p.y, u.el, u.lv, true, 1, 1, Math.PI / 2); } });
+  enemy.forEach((u, i) => { if (u) { const p = cellPos('e', i); drawUnit(p.x, p.y, u.el, u.lv, true, { flip: true }); } });
   S.grid.forEach((u, i) => {
     if (!u || (drag && drag.i === i)) return;
     const p = cellPos('p', i), k = pops[i];
-    drawUnit(p.x, p.y, u.el, u.lv, false, 1 + Math.sin(k * Math.PI) * 0.25, 1, -Math.PI / 2);
+    drawUnit(p.x, p.y, u.el, u.lv, false, { s: 1 + Math.sin(k * Math.PI) * 0.25 });
   });
-  if (drag) { const u = S.grid[drag.i]; if (u) drawUnit(drag.x, drag.y - 10, u.el, u.lv, false, 1.15, 0.92, -Math.PI / 2); }
+  if (drag) { const u = S.grid[drag.i]; if (u) drawUnit(drag.x, drag.y - 14, u.el, u.lv, false, { s: 1.15, alpha: 0.92 }); }
 }
 
 function drawBattle() {
   const F = B.F.slice().sort((a, b) => a.y - b.y);
   for (const f of F) {
     if (f.dead && f.deadT > 0.4) continue;
-    const lx = Math.cos(f.look) * Math.sin(f.lunge / 0.18 * Math.PI) * 10;
-    const ly = Math.sin(f.look) * Math.sin(f.lunge / 0.18 * Math.PI) * 10;
+    const lz = Math.sin(f.lunge / 0.18 * Math.PI) * 10;
     const sh = f.hit > 0 ? (Math.random() - 0.5) * 4 : 0;
-    const alpha = f.dead ? 1 - f.deadT / 0.4 : 1, s = f.dead ? 1 - f.deadT : 1;
-    drawUnit(f.x + lx + sh, f.y + ly, f.el, f.lv, f.side === 'e', s, alpha, f.look);
+    drawUnit(f.x + Math.cos(f.look) * lz + sh, f.y + Math.sin(f.look) * lz, f.el, f.lv, f.side === 'e',
+      { s: f.dead ? 1 - f.deadT : 1, alpha: f.dead ? 1 - f.deadT / 0.4 : 1, flip: Math.cos(f.look) < 0, hit: f.hit, badge: false });
     if (!f.dead) {
-      const r = 13 + f.lv * 2.4, w = 34, y = f.y - r * 1.6 - 10;
+      const w = 34, y = f.y - 44;
       rr(f.x - w / 2, y, w, 6, 3); ctx.fillStyle = 'rgba(40,20,60,0.4)'; ctx.fill();
       rr(f.x - w / 2, y, w * Math.max(0, f.hp / f.maxhp), 6, 3); ctx.fillStyle = f.side === 'p' ? '#5fd35f' : '#ff6b6b'; ctx.fill();
     }
   }
   for (const p of B.proj) {
-    ctx.fillStyle = p.src.side === 'p' ? '#e7ddff' : '#b48ad8';
-    ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#6f55cf'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, 4, now * 12, now * 12 + 4); ctx.stroke();
+    const col = info(p.src.el).c;
+    if (p.src.el.includes('electric')) { // 지그재그 번개
+      ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(p.x - 6, p.y - 6);
+      ctx.lineTo(p.x + 2, p.y - 1); ctx.lineTo(p.x - 2, p.y + 1); ctx.lineTo(p.x + 6, p.y + 6); ctx.stroke();
+    } else {
+      ctx.fillStyle = col; ctx.globalAlpha = 0.85;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, 4, now * 12, now * 12 + 4); ctx.stroke();
+    }
   }
   if (B.over) outlined(B.over === 'win' ? '이겼다!' : '앗...', W / 2, 360, 44, B.over === 'win' ? '#ffd23f' : '#cfd8ff');
 }
@@ -481,8 +540,10 @@ function drawBottom() {
   }
   const c = cost(), full = !S.grid.includes(null);
   if (S.merged === 0 && S.grid.filter(Boolean).length >= 2) text('같은 친구 둘을 끌어다 겹치면 합체해요!', W / 2, 642, 14, '#c94a1a');
+  else if (S.grid.some(u => u && !isHybrid(u.el) && u.lv >= HYBRID_LV)) text('Lv' + HYBRID_LV + '+ 다른 원소끼리 겹치면 혼합 진화!', W / 2, 642, 13, '#7b4dff');
   button(GX, 654, 182, 78, '친구 부르기', '#ffa24c', buy, (x, y) => {
-    coinIcon(x - 18, y, 9); outlined(String(c), x + 8, y, 18, '#fff');
+    coinIcon(x - 40, y, 9); outlined(fmt(c), x - 16, y, 16, '#fff');
+    outlined('Lv.' + summonLv(S.stage), x + 36, y, 15, '#fff6c0', '#7a3510');
   }, S.coins < c || full);
   button(GX + COLS * CELL - 182, 654, 182, 78, '싸우자!', '#ff6b8a', startBattle, null, !S.grid.some(Boolean));
   text('처음부터 다시', W / 2, 760, 12, 'rgba(90,70,110,0.55)', 'center', 'normal');
@@ -491,17 +552,18 @@ function drawBottom() {
 
 function drawResult() {
   ctx.fillStyle = 'rgba(40,20,60,0.45)'; ctx.fillRect(0, 0, W, H);
-  rr(40, 230, W - 80, 290, 28); ctx.fillStyle = '#fffaf0'; ctx.fill();
+  rr(40, 220, W - 80, 310, 28); ctx.fillStyle = '#fffaf0'; ctx.fill();
   ctx.lineWidth = 5; ctx.strokeStyle = result.win ? '#ffb02e' : '#a7b4e0'; ctx.stroke();
   if (result.win) {
-    outlined('승리!', W / 2, 290, 48, '#ffd23f', '#a05a00');
-    text('스테이지 ' + result.stage + ' 통과!', W / 2, 340, 20, '#5a3d7a');
+    outlined('승리!', W / 2, 280, 48, '#ffd23f', '#a05a00');
+    text('스테이지 ' + result.stage + ' 통과!', W / 2, 326, 20, '#5a3d7a');
+    if (result.slUp) text('이제 Lv.' + result.slUp + ' 친구를 부를 수 있어요!', W / 2, 356, 16, '#c94a1a');
   } else {
-    outlined('아쉬워요!', W / 2, 290, 42, '#a7c4ff', '#3a4a8a');
-    text('합체해서 더 강해진 다음', W / 2, 335, 18, '#5a3d7a');
-    text('다시 도전해 봐요!', W / 2, 360, 18, '#5a3d7a');
+    outlined('아쉬워요!', W / 2, 280, 42, '#a7c4ff', '#3a4a8a');
+    text('합체해서 더 강해진 다음', W / 2, 326, 18, '#5a3d7a');
+    text('다시 도전해 봐요!', W / 2, 352, 18, '#5a3d7a');
   }
-  coinIcon(W / 2 - 34, 395, 13); outlined('+' + result.reward, W / 2 + 12, 395, 26, '#ffd23f', '#8a5a00');
+  coinIcon(W / 2 - 34, 392, 13); outlined('+' + fmt(result.reward), W / 2 + 14, 392, 26, '#ffd23f', '#8a5a00');
   btns = [];
   button(90, 430, W - 180, 66, result.win ? '다음 스테이지' : '다시 준비하기', result.win ? '#5fc95f' : '#8fb8ff', closeResult);
 }
@@ -516,22 +578,24 @@ function drawFx(dt) {
   ctx.globalAlpha = 1;
   rings = rings.filter(r => (r.t += dt) < 0.5);
   for (const r of rings) {
+    if (r.t < 0) continue;
     ctx.globalAlpha = 1 - r.t / 0.5; ctx.strokeStyle = r.color; ctx.lineWidth = 5;
     ctx.beginPath(); ctx.arc(r.x, r.y, 10 + r.t * 120, 0, Math.PI * 2); ctx.stroke();
   }
   ctx.globalAlpha = 1;
   texts = texts.filter(t => (t.t += dt) < 0.8);
-  for (const t of texts) { ctx.globalAlpha = 1 - t.t / 0.8; outlined(t.txt, t.x, t.y - t.t * 30, 16, t.color); }
+  for (const t of texts) { ctx.globalAlpha = 1 - t.t / 0.8; outlined(t.txt, t.x, t.y - t.t * 30, 15, t.color); }
   ctx.globalAlpha = 1;
   if (toastMsg) {
     toastMsg.t += dt;
     if (toastMsg.t > toastMsg.dur) toastMsg = null;
     else {
       const a = Math.min(1, toastMsg.t * 6, (toastMsg.dur - toastMsg.t) * 4);
-      ctx.globalAlpha = a; ctx.font = 'bold 16px ' + FONT;
-      const w = Math.min(W - 20, ctx.measureText(toastMsg.txt).width + 36);
-      rr(W / 2 - w / 2, 340, w, 40, 20); ctx.fillStyle = 'rgba(59,43,79,0.9)'; ctx.fill();
-      text(toastMsg.txt, W / 2, 361, 16, '#fff');
+      ctx.globalAlpha = a; ctx.font = 'bold 15px ' + FONT;
+      const w = Math.min(W - 16, ctx.measureText(toastMsg.txt).width + 30);
+      rr(W / 2 - w / 2, 340, w, 40, 20); ctx.fillStyle = 'rgba(59,43,79,0.92)'; ctx.fill();
+      ctx.save(); ctx.beginPath(); ctx.rect(W / 2 - w / 2 + 8, 340, w - 16, 40); ctx.clip();
+      text(toastMsg.txt, W / 2, 361, 15, '#fff'); ctx.restore();
       ctx.globalAlpha = 1;
     }
   }
@@ -546,6 +610,7 @@ function frame(t) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cv.width, cv.height);
   ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
+  ctx.imageSmoothingQuality = 'high';
   btns = [];
   drawBoard();
   drawMiddle();
