@@ -36,13 +36,18 @@ const FONT = "'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif";
 /* ---------- 원소와 혼합 ---------- */
 // 상성: 물 > 불 > 바람 > 땅 > 전기 > 물
 const EL = {
-  water:    { label:'물',   c:'#4aa8ff', beats:['fire'],     base:{ hp:34, atk:5, range:44,  spd:46, cd:0.9 } },
-  fire:     { label:'불',   c:'#ff7a3c', beats:['wind'],     base:{ hp:22, atk:8, range:44,  spd:58, cd:0.9 } },
-  wind:     { label:'바람', c:'#9fb4d6', beats:['earth'],    base:{ hp:20, atk:6, range:190, spd:44, cd:1.15 } },
-  earth:    { label:'땅',   c:'#9a7b55', beats:['electric'], base:{ hp:40, atk:5, range:44,  spd:40, cd:1.0 } },
-  electric: { label:'전기', c:'#ffd21f', beats:['water'],    base:{ hp:22, atk:7, range:120, spd:52, cd:0.8 } },
+  // Lv1은 모두 힘 1, 체력 5. 원소마다 다른 건 사거리·속도뿐
+  water:    { label:'물',   c:'#4aa8ff', beats:['fire'],     base:{ hp:5, atk:1, range:44,  spd:46, cd:1.0 } },
+  fire:     { label:'불',   c:'#ff7a3c', beats:['wind'],     base:{ hp:5, atk:1, range:44,  spd:58, cd:1.0 } },
+  wind:     { label:'바람', c:'#9fb4d6', beats:['earth'],    base:{ hp:5, atk:1, range:150, spd:44, cd:1.0 } },
+  earth:    { label:'땅',   c:'#9a7b55', beats:['electric'], base:{ hp:5, atk:1, range:44,  spd:40, cd:1.0 } },
+  electric: { label:'전기', c:'#ffd21f', beats:['water'],    base:{ hp:5, atk:1, range:110, spd:52, cd:1.0 } },
 };
 const ELS = ['water', 'fire', 'wind', 'earth', 'electric'];
+// 레벨이 1 오를 때 힘·체력이 몇 배가 되는지. Lv3 하나가 Lv1 둘은 이기고 셋에게는 지도록 맞춘 값
+let GROW = 1.5;
+const ADV = 1.04;      // 상성일 때 공격 +4%
+const HY_BONUS = 1.2;  // 혼합 친구는 힘·체력 +20%
 const HY = {
   wind_electric:  { pair:['wind','electric'],  c:'#a58cff', names:['뇌구름','번개 회오리','뇌조','번개 늑대','뇌폭룡'] },
   water_electric: { pair:['water','electric'], c:'#3fd0ff', names:['찌릿방울','번개여우','해일늑대','뇌해사자','뇌해룡'] },
@@ -53,7 +58,7 @@ for (const k in HY) {
   const [a, b] = HY[k].pair, A = EL[a].base, B = EL[b].base;
   HY[k].label = EL[a].label + '+' + EL[b].label;
   HY[k].beats = EL[a].beats.concat(EL[b].beats);
-  HY[k].base = { hp:(A.hp + B.hp) * 0.65, atk:(A.atk + B.atk) * 0.65, range:Math.max(A.range, B.range), spd:Math.max(A.spd, B.spd), cd:Math.min(A.cd, B.cd) };
+  HY[k].base = { hp:(A.hp + B.hp) / 2 * HY_BONUS, atk:(A.atk + B.atk) / 2 * HY_BONUS, range:Math.max(A.range, B.range), spd:Math.max(A.spd, B.spd), cd:Math.min(A.cd, B.cd) };
 }
 const info = k => EL[k] || HY[k];
 const isHybrid = k => !!HY[k];
@@ -75,7 +80,7 @@ function mergeResult(a, b) {
   return null;
 }
 function stats(k, lv) {
-  const b = info(k).base, m = Math.pow(1.38, lv - 1);
+  const b = info(k).base, m = Math.pow(GROW, lv - 1);
   return { maxhp: b.hp * m, atk: b.atk * m, range: b.range, spd: b.spd, cd: b.cd };
 }
 function unitName(u) {
@@ -168,7 +173,7 @@ function sprite(k, idx, foe) {
 /* ---------- 저장 (이 기기 안에만) ---------- */
 const SAVE = 'spirit-pals-v2';
 function fresh() {
-  return { coins:20, stage:1, grid:Array(N).fill(null), found:{}, merged:0, pick:'water', sfxOff:false, musicOff:false, cleared:false,
+  return { coins:50, stage:1, grid:Array(N).fill(null), found:{}, merged:0, pick:'water', sfxOff:false, musicOff:false, cleared:false,
            quiz:{ digits:'1', ops:'+' } };
 }
 function load() {
@@ -196,11 +201,17 @@ let S = load();
    같은 원소끼리 합체할 때마다 +1 이라, Lv90 친구에 9번 더 합치면 Lv99. */
 const summonLv = st => Math.max(1, Math.min(90, Math.floor(Math.min(st, MAXSTAGE) / 30) * 10));
 // 상대 레벨은 판마다 조금씩: 1판 Lv1 → 300판 Lv99
-const enemyLv = st => 1 + Math.floor((Math.min(st, MAXSTAGE) - 1) * (MAXLV - 1) / (MAXSTAGE - 1));
-const cost = () => 4 + Math.floor(S.stage * 0.6);
-const winReward = st => 12 + st * 3;
-const loseReward = st => 3 + Math.floor(st / 2);
-const quizReward = st => 10 + st * 2;
+let EN_SLOPE = 0.24, EN_BUDGET = 0.3, EN_CAP = 24;
+// 상대 레벨: 부르는 레벨 단계를 따라가며, 한 단계(30판) 동안 약 +7 올라감. 300판(마지막)은 Lv96~99
+const enemyLv = st => st >= MAXSTAGE ? 96 : summonLv(st) + Math.floor((st % 30) * EN_SLOPE);
+// 코인: 부르기 값 = 10 × 부르는 레벨 (Lv1 10, Lv10 100 … Lv90 900).
+// 보상은 '친구 몇 명을 부를 수 있는지'로 정함: 이기면 WIN_X명, 지면 LOSE_X명, 문제 맞히면 QUIZ_X명어치
+let WIN_X = 2.2, LOSE_X = 0.8, QUIZ_X = 1.2, TIER_GIFT = 4;
+const unitCost = st => 10 * summonLv(st);
+const cost = () => unitCost(S.stage);
+const winReward = st => Math.round(unitCost(st) * WIN_X);
+const loseReward = st => Math.round(unitCost(st) * LOSE_X);
+const quizReward = st => Math.round(unitCost(st) * QUIZ_X);
 
 /* ---------- 상대 만들기 (스테이지마다 항상 같은 배치) ---------- */
 function rng(seed) {
@@ -214,8 +225,8 @@ function rng(seed) {
 function genEnemies(st) {
   const R = rng(st * 7919 + 17), sl = enemyLv(st);
   const boss = st === MAXSTAGE;
-  let b = boss ? 40 : Math.min(34, 3 + Math.floor(st * 0.45));
-  const maxOff = Math.min(4, 1 + Math.floor(st / 8));
+  let b = boss ? 20 : Math.min(EN_CAP, 2 + Math.floor(st * EN_BUDGET));
+  const maxOff = Math.min(2, 1 + Math.floor(st / 10));  // 상대는 기준 레벨보다 최대 +2
   const g = Array(N).fill(null);
   while (b > 0) {
     const off = Math.floor(R() * (Math.min(maxOff, Math.floor(Math.log2(b))) + 1));
@@ -344,12 +355,14 @@ function burst(x, y, color, n = 12) {
 function floatText(x, y, txt, color) { texts.push({ x, y, txt, color, t: 0 }); }
 function toast(txt, dur = 2) { toastMsg = { txt, t: 0, dur }; }
 function fmt(n) {
+  if (n < 10 && Math.abs(n - Math.round(n)) > 0.05) return n.toFixed(1);
   n = Math.round(n);
   if (n < 1e4) return String(n);
   if (n < 1e8) return (n / 1e4).toFixed(n < 1e5 ? 1 : 0) + '만';
   if (n < 1e12) return (n / 1e8).toFixed(n < 1e9 ? 1 : 0) + '억';
   if (n < 1e16) return (n / 1e12).toFixed(n < 1e13 ? 1 : 0) + '조';
-  return (n / 1e16).toFixed(0) + '경';
+  if (n < 1e20) return (n / 1e16).toFixed(n < 1e17 ? 1 : 0) + '경';
+  return (n / 1e20).toFixed(0) + '해';
 }
 
 /* ---------- 그리기 도우미 ---------- */
@@ -472,16 +485,19 @@ function startBattle() {
 function hitF(a, b) {
   if (b.dead) return;
   const adv = beatsTarget(a.el, b.el);
-  const dmg = Math.max(1, a.atk * (adv ? 1.6 : 1) * (0.9 + Math.random() * 0.2));
+  const dmg = a.atk * (adv ? ADV : 1) * (0.97 + Math.random() * 0.06);
   b.hp -= dmg; b.hit = 0.15;
-  floatText(b.x + (Math.random() - 0.5) * 16, b.y - 30, adv ? '최고! ' + fmt(dmg) : fmt(dmg), adv ? '#ffd23f' : '#fff');
+  floatText(b.x + (Math.random() - 0.5) * 16, b.y - 30, adv ? '상성! ' + fmt(dmg) : fmt(dmg), adv ? '#ffd23f' : '#fff');
   sfx(adv ? 'crit' : 'hit', { gap: 0.05, vol: 0.75, rate: 0.9 + Math.random() * 0.2 });
   if (b.hp <= 0) { b.dead = true; b.deadT = 0; burst(b.x, b.y, info(b.el).c, 14); sfx('poof', { gap: 0.06 }); }
 }
 function stepBattle(dt) {
   B.t += dt;
   const F = B.F;
-  for (const f of F) {
+  // 매번 순서를 섞어서 어느 편도 먼저 때리는 이득이 없게
+  const order = F.slice();
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  for (const f of order) {
     if (f.dead) { f.deadT += dt; continue; }
     f.cdT -= dt; f.lunge = Math.max(0, f.lunge - dt); f.hit = Math.max(0, f.hit - dt);
     let best = null, bd = 1e9;
@@ -524,6 +540,9 @@ function endBattle(win) {
     if (S.stage >= MAXSTAGE) { S.cleared = true; result.final = true; }
     else S.stage++;
     result.slUp = summonLv(S.stage) > oldSl ? summonLv(S.stage) : 0;
+    if (result.slUp) { // 부르는 레벨이 오르면 새 친구 TIER_GIFT명어치 코인 선물
+      result.gift = unitCost(S.stage) * TIER_GIFT; S.coins += result.gift; result.reward += result.gift;
+    }
     sfx(result.final ? 'finale' : 'win', { duck: result.final ? 3.6 : 1.4 }); sfx('coin', { delay: result.final ? 3.2 : 1.1, gap: 0 });
     for (let i = 0; i < 5; i++) burst(260 + i * 110, 200, info(ELS[i]).c, result.final ? 30 : 14);
   } else { sfx('lose', { duck: 1.4 }); sfx('coin', { delay: 1.2, gap: 0, vol: 0.7 }); }
@@ -822,7 +841,7 @@ function drawResult() {
   } else if (result.win) {
     outlined('승리!', W / 2, 150, 48, '#ffd23f', '#a05a00');
     text('스테이지 ' + result.stage + ' 통과!', W / 2, 200, 20, '#5a3d7a');
-    if (result.slUp) text('이제 Lv.' + result.slUp + ' 친구를 부를 수 있어요!', W / 2, 232, 16, '#c94a1a');
+    if (result.slUp) text('이제 Lv.' + result.slUp + ' 친구를 부를 수 있어요! (선물 코인 +' + fmt(result.gift) + ')', W / 2, 232, 16, '#c94a1a');
   } else {
     outlined('아쉬워요!', W / 2, 150, 44, '#a7c4ff', '#3a4a8a');
     text('합체해서 더 강해진 다음 다시 도전해요!', W / 2, 200, 17, '#5a3d7a');
