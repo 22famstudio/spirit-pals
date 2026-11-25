@@ -337,8 +337,9 @@ document.addEventListener('visibilitychange', () => {
 /* ---------- 화면 크기 ---------- */
 let scale = 1, ox = 0, oy = 0, dpr = 1, vw = 0, vh = 0;
 function resize() {
-  dpr = Math.min(window.devicePixelRatio || 1, 2.5);
   vw = cv.clientWidth || innerWidth; vh = cv.clientHeight || innerHeight;
+  // 큰 화면(아이패드 등)은 그릴 점 수를 약 350만 개로 제한: 사파리는 큰 캔버스를 매 프레임 그리면 많이 느려짐
+  dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(3.5e6 / (vw * vh)));
   cv.width = Math.round(vw * dpr); cv.height = Math.round(vh * dpr);
   scale = Math.min(vw / W, vh / H); ox = (vw - W * scale) / 2; oy = (vh - H * scale) / 2;
 }
@@ -1096,6 +1097,7 @@ function drawTimer() {
 startScreen();
 
 let last = performance.now();
+const SHOW_FPS = /fps/.test(location.search); let fpsN = 0, fpsT = 0, fpsV = 0;
 function frame(t) {
   const dt = Math.min(0.05, (t - last) / 1000); last = t; now = t / 1000;
   for (let i = 0; i < N; i++) pops[i] = Math.max(0, pops[i] - dt * 3);
@@ -1104,7 +1106,6 @@ function frame(t) {
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cv.width, cv.height);
-  ctx.imageSmoothingQuality = 'high';
   drawBackground();
   btns = [];
   if (screen === 'game') {
@@ -1124,6 +1125,12 @@ function frame(t) {
   else if (modal === 'settings') drawSettings();
   drawFx(dt);
   drawRotateHint();
+  if (SHOW_FPS) { // 주소 끝에 ?fps 를 붙이면 화면 왼쪽 위에 초당 프레임 수 표시 (느림 확인용)
+    fpsN++; if (t - fpsT >= 1000) { fpsV = Math.round(fpsN * 1000 / (t - fpsT)); fpsN = 0; fpsT = t; }
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.font = 'bold ' + Math.round(14 * dpr) + 'px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 150 * dpr, 22 * dpr); ctx.fillStyle = '#0f0';
+    ctx.fillText(fpsV + ' fps  ' + cv.width + 'x' + cv.height, 4 * dpr, 11 * dpr);
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
