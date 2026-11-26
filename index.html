@@ -30,7 +30,7 @@ const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 // 가로 화면 기준 크기
 const W = 960, H = 540, COLS = 3, ROWS = 5, N = COLS * ROWS, CELL = 72;
 const PX = 120, EX = 624, GY = 76;              // 내 칸 / 상대 칸 / 위쪽 여백
-const MAXLV = 99, HYBRID_LV = 20, MAXSTAGE = 300;
+const MAXLV = 99, HYBRID_LV = 20, MAXSTAGE = 390;
 const FONT = "'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif";
 
 /* ---------- 원소와 혼합 ---------- */
@@ -68,14 +68,14 @@ function hybridOf(a, b) {
 }
 const band = lv => Math.floor(lv / HYBRID_LV);
 // 두 친구가 합쳐지면 무엇이 되는지 (안 되면 null)
-// 같은 원소끼리는 레벨이 달라도 합체: 높은 쪽 레벨 + 1 (단, 레벨 차이가 10 이상이면 안 됨)
-const MERGE_GAP = 9;
+// 같은 원소·같은 레벨끼리만 합체: 레벨 + 1 (예: Lv23 + Lv23 = Lv24)
 function mergeResult(a, b) {
-  if (!a || !b) return null;
-  if (a.el === b.el) { const hi = Math.max(a.lv, b.lv), lo = Math.min(a.lv, b.lv); return hi < MAXLV && hi - lo <= MERGE_GAP ? { el:a.el, lv:hi + 1 } : null; }
-  if (!isHybrid(a.el) && !isHybrid(b.el) && a.el !== b.el && a.lv >= HYBRID_LV && b.lv >= HYBRID_LV && band(a.lv) === band(b.lv)) {
+  if (!a || !b || a.lv !== b.lv) return null;
+  if (a.el === b.el) return a.lv < MAXLV ? { el:a.el, lv:a.lv + 1 } : null;
+  // 혼합: 짝이 맞는 두 원소가 둘 다 Lv20 이상이고 레벨이 같을 때
+  if (!isHybrid(a.el) && !isHybrid(b.el) && a.lv >= HYBRID_LV) {
     const h = hybridOf(a.el, b.el);
-    if (h) return { el:h, lv:Math.min(MAXLV, Math.max(a.lv, b.lv) + 1) };
+    if (h) return { el:h, lv:Math.min(MAXLV, a.lv + 1) };
   }
   return null;
 }
@@ -197,14 +197,24 @@ function load() {
 function save() { try { localStorage.setItem(SAVE, JSON.stringify(S)); } catch (e) {} }
 let S = load();
 
-/* ---------- 300판 동안의 성장 곡선 ----------
-   부르는 친구 레벨은 30판마다 한 단계: Lv1 → 30판 Lv10 → 60판 Lv20 … → 270판 Lv90.
-   같은 원소끼리 합체할 때마다 +1 이라, Lv90 친구에 9번 더 합치면 Lv99. */
-const summonLv = st => Math.max(1, Math.min(90, Math.floor(Math.min(st, MAXSTAGE) / 30) * 10));
-// 상대 레벨은 판마다 조금씩: 1판 Lv1 → 300판 Lv99
-let EN_SLOPE = 0.24, EN_BUDGET = 0.3, EN_CAP = 24;
-// 상대 레벨: 부르는 레벨 단계를 따라가며, 한 단계(30판) 동안 약 +7 올라감. 300판(마지막)은 Lv96~99
-const enemyLv = st => st >= MAXSTAGE ? 96 : summonLv(st) + Math.floor((st % 30) * EN_SLOPE);
+/* ---------- 성장 곡선 ----------
+   같은 레벨끼리만 합체라 한 단계 오를 때마다 친구가 2배 필요.
+   부르는 친구 레벨은 30판마다 한 단계: Lv1 → 30판 Lv10 → … → 270판 Lv90,
+   그 뒤로는 2씩: 300판 Lv92 → 330판 Lv94 → 360판 Lv96. Lv96 친구 8명을 모으면 Lv99 (마지막 390판). */
+const TIERS = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 92, 94, 96];
+const summonLv = st => TIERS[Math.min(TIERS.length - 1, Math.floor(Math.min(st, MAXSTAGE) / 30))];
+// 상대 세기는 '지금 부르는 레벨 친구 몇 명어치를 모았을지'에 맞춤 (상대는 그 EN_K배):
+// 한 판마다 EN_RATE명어치씩 늘고, 단계가 바뀌면 전에 모은 친구를 새 레벨로 환산 (+ 선물·돌려받은 코인)
+let EN_START = 10, EN_RATE = 2, EN_K = 1.15, EN_LATE = 0.62;  // EN_LATE: 270판 뒤(Lv90~) 상대를 조금 약하게 (높은 레벨은 모으기 훨씬 어려움)
+function armyUnits(st) {
+  let u = 3.5, t0 = 1;  // 처음엔 50코인 = Lv1 5명. 1판 상대는 그보다 적게
+  for (let i = 1; i < TIERS.length && i * 30 <= st; i++) {
+    const gap = TIERS[i] - TIERS[i - 1];
+    u = (u + EN_RATE * (i * 30 - t0)) / Math.pow(2, gap) + (gap >= 10 ? EN_START : TIER_GIFT);
+    t0 = i * 30;
+  }
+  return u + EN_RATE * (st - t0);
+}
 // 코인: 부르기 값 = 10 × 부르는 레벨 (Lv1 10, Lv10 100 … Lv90 900).
 // 보상은 '친구 몇 명을 부를 수 있는지'로 정함: 이기면 WIN_X명, 지면 LOSE_X명, 문제 맞히면 QUIZ_X명어치
 let WIN_X = 2.2, LOSE_X = 0.8, QUIZ_X = 1.2, TIER_GIFT = 4;
@@ -224,13 +234,14 @@ function rng(seed) {
   };
 }
 function genEnemies(st) {
-  const R = rng(st * 7919 + 17), sl = enemyLv(st);
+  const R = rng(st * 7919 + 17), sl = summonLv(st);
   const boss = st === MAXSTAGE;
-  let b = boss ? 20 : Math.min(EN_CAP, 2 + Math.floor(st * EN_BUDGET));
-  const maxOff = Math.min(2, 1 + Math.floor(st / 10));  // 상대는 기준 레벨보다 최대 +2
+  // b: 상대 전체 세기 (부르는 레벨 친구 몇 명어치). Lv가 1 높은 친구는 2명어치
+  let b = Math.max(2, Math.round(EN_K * (st >= 270 ? EN_LATE : 1) * armyUnits(st) * (boss ? 1.3 : 1)));
+  const lo = Math.max(0, Math.ceil(Math.log2(b / 12)));  // 칸(15)에 다 들어가도록 기본 레벨을 올림
   const g = Array(N).fill(null);
   while (b > 0) {
-    const off = Math.floor(R() * (Math.min(maxOff, Math.floor(Math.log2(b))) + 1));
+    const off = Math.min(Math.floor(Math.log2(b)), lo + Math.floor(R() * 3));
     const empty = []; g.forEach((u, i) => { if (!u) empty.push(i); });
     if (!empty.length) break;
     const front = empty.filter(i => i % COLS === 0);
@@ -651,7 +662,7 @@ cv.addEventListener('pointerup', () => {
     if (hybridNew) toast('혼합 진화! ' + unitName(m) + ' Lv.' + m.lv, 2.4);
     else if (m.lv === MAXLV) toast('최고 레벨 달성! ' + unitName(m) + ' Lv.99', 2.4);
     else if (isNew) toast('진화! ' + unitName(m) + ' Lv.' + m.lv, 1.6);
-  } else if (b.el === a.el) { toast(Math.max(a.lv, b.lv) >= MAXLV ? '이미 최고 레벨이에요!' : '레벨 차이가 10 넘게 나면 합체할 수 없어요'); sfx('nope'); }
+  } else if (b.el === a.el) { toast(Math.max(a.lv, b.lv) >= MAXLV ? '이미 최고 레벨이에요!' : '같은 레벨끼리만 합체할 수 있어요'); sfx('nope'); }
   else { S.grid[j] = a; S.grid[d.i] = b; pops[j] = 0.4; pops[d.i] = 0.4; sfx('move'); }
   save();
 });
@@ -824,7 +835,7 @@ function drawBottom() {
     outlined('Lv.' + summonLv(S.stage), x + 40, y, 15, '#fff6c0', '#7a3510');
   }, S.coins < c || full);
   button(EX - 6, 448, COLS * CELL + 12, 76, S.cleared ? '다시 도전!' : '싸우자!', '#ff6b8a', startBattle, null, !S.grid.some(Boolean), 26);
-  if (S.merged === 0 && S.grid.filter(Boolean).length >= 2) outlined('같은 원소 친구끼리 겹치면 합체!', cx, 350, 14, '#fff', '#7a3510');
+  if (S.merged === 0 && S.grid.filter(Boolean).length >= 2) outlined('같은 원소·같은 레벨 친구끼리 겹치면 합체!', cx, 350, 14, '#fff', '#7a3510');
   else if (S.grid.some(u => u && !isHybrid(u.el) && u.lv >= HYBRID_LV)) outlined('Lv' + HYBRID_LV + '+ 다른 원소끼리 겹치면 혼합 진화!', cx, 350, 13, '#efe6ff', '#4a2a8a');
   if (S.cleared) outlined('★ 300판 모두 클리어! ★', cx, 384, 17, '#ffd23f', '#7a3510');
 }
