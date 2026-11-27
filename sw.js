@@ -1,6 +1,6 @@
 // 게임 파일을 기기에 저장해 두고, 인터넷이 없어도 실행되게 합니다.
 // 그림 파일을 바꾼 뒤에는 VERSION 숫자를 올려야 기기에 새 그림이 들어갑니다.
-const VERSION = 'spirit-pals-11';
+const VERSION = 'spirit-pals-12';
 const SHEETS = ['fire', 'water', 'wind', 'earth', 'electric', 'wind_electric', 'water_electric', 'earth_water', 'earth_fire'];
 const SFX = ['tap', 'key', 'summon', 'move', 'merge', 'evolve', 'coin', 'hit', 'crit', 'shoot', 'poof',
              'correct', 'win', 'lose', 'start', 'finale', 'wrong', 'nope'];
